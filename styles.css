@@ -1,0 +1,666 @@
+:root {
+  --bg: #14160f;
+  --panel: #1e2318;
+  --ink: #f3efe4;
+  --muted: #b7b39e;
+  --line: #3a4030;
+  --accent: #ef6c00;
+  --accent-2: #f6c445;
+  --good: #9ccc65;
+  --warn: #ffb74d;
+  --font: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+}
+
+.app {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 20px 20px 32px;
+}
+
+.topbar {
+  display: flex;
+  gap: 24px;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+}
+
+.lede {
+  margin: 0;
+  max-width: 520px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+.site-wrap {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.area-popover {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 168px;
+  padding: 8px;
+  background: #1e2318;
+  border: 1px solid var(--accent-2);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+
+.area-popover[hidden] {
+  display: none;
+}
+
+.area-popover label {
+  gap: 3px;
+}
+
+.area-popover input,
+.area-popover select {
+  width: 100%;
+  padding: 6px 8px;
+}
+
+.site-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.toolbar-actions label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+select,
+button,
+input {
+  font: inherit;
+  color: var(--ink);
+  background: #2a3122;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+select,
+button {
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#addEquipBtn,
+#addAreaBtn,
+#addDumpBtn,
+#addHaulBtn {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
+.actor-dump.selected .dump-select {
+  stroke: #ffe082;
+  stroke-width: 2.5;
+  stroke-dasharray: 5 4;
+  fill: none;
+}
+
+.haul-bed.selected {
+  stroke: #3e2e20;
+}
+
+.haul-dash.selected {
+  stroke: #fff3b0;
+}
+
+.equip-block-body {
+  stroke: #1b160f;
+  stroke-width: 2.4;
+}
+
+.equip-block.selected .equip-block-body {
+  stroke: #ffe082;
+  stroke-width: 3.2;
+}
+
+.equip-block-code {
+  font: 700 11px "Segoe UI", sans-serif;
+  fill: #fff8e7;
+  text-anchor: middle;
+}
+
+.equip-block-name {
+  font: 700 10px "Segoe UI", sans-serif;
+  fill: #fff8e7;
+  text-anchor: middle;
+  paint-order: stroke fill;
+  stroke: rgba(40, 24, 8, 0.45);
+  stroke-width: 3px;
+}
+
+#drawLineBtn[aria-pressed="true"],
+#measureBtn[aria-pressed="true"] {
+  background: #3a3320;
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+#site {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #7fa85a;
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+}
+
+#site.dragging {
+  cursor: grabbing;
+}
+
+#site.drawing,
+#site.measuring {
+  cursor: crosshair;
+}
+
+.ground-base {
+  fill: #8bb86a;
+}
+
+.work-area {
+  filter: url(#soft-shadow);
+}
+
+.work-area .pit {
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.work-area.zone .pit {
+  fill: #c5b89a;
+  stroke: #6d5c3d;
+  stroke-dasharray: 9 6;
+}
+
+.work-area.cut .pit {
+  fill: #8d6840;
+  stroke: #5c4024;
+}
+
+.work-area.cut .pit-hole {
+  fill: #5a3f24;
+}
+
+.work-area.fill .pit {
+  fill: #d7b07a;
+  stroke: #9a7344;
+}
+
+.work-area.selected .pit {
+  stroke: #ffe082;
+  stroke-width: 4;
+}
+
+.work-area.linked .pit {
+  stroke: #ffe082;
+  stroke-width: 3.2;
+  stroke-dasharray: 8 5;
+}
+
+.actor-excavator.on-area .exc-house rect:first-child,
+.equip-block.on-area .equip-block-body {
+  stroke: #ffe082;
+  stroke-width: 3;
+}
+
+.work-area-label {
+  font: 700 13px "Segoe UI", sans-serif;
+  fill: #fff8e7;
+  paint-order: stroke fill;
+  stroke: rgba(40, 24, 8, 0.45);
+  stroke-width: 3px;
+}
+
+.haul-bed {
+  fill: none;
+  stroke: #6b5340;
+  stroke-width: 28;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.haul-surface {
+  fill: none;
+  stroke: #b08968;
+  stroke-width: 20;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.haul-dash {
+  fill: none;
+  stroke: #ffe082;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 14 12;
+  animation: haul-marquee 1.2s linear infinite;
+}
+
+@keyframes haul-marquee {
+  to {
+    stroke-dashoffset: -26;
+  }
+}
+
+.line-path {
+  fill: none;
+  stroke: #8ecae6;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.line-path.selected {
+  stroke: #9ccc65;
+}
+
+.draw-fill {
+  fill: url(#hatch-lines);
+  fill-opacity: 0.95;
+}
+
+.draw-closed {
+  fill: rgba(142, 202, 230, 0.12);
+}
+
+.draw-arrow-head {
+  fill: #8ecae6;
+  stroke: none;
+}
+
+.line-path.selected .draw-arrow-head,
+.draw-group.selected .draw-arrow-head {
+  fill: #9ccc65;
+}
+
+.draw-point-dot {
+  fill: #8ecae6;
+  stroke: #1b160f;
+  stroke-width: 1.5;
+}
+
+.draw-point-cross {
+  stroke: #8ecae6;
+  stroke-width: 1.6;
+  fill: none;
+}
+
+.draw-text-box {
+  fill: #1e2318;
+  stroke: #8ecae6;
+  stroke-width: 1.6;
+}
+
+.draw-group.selected .draw-text-box {
+  stroke: #9ccc65;
+}
+
+.draw-text {
+  fill: #fff8e7;
+  font: 650 12px "Segoe UI", sans-serif;
+}
+
+.line-draft {
+  fill: none;
+  stroke: #ef6c00;
+  stroke-width: 2.5;
+  stroke-dasharray: 7 5;
+}
+
+.handle {
+  fill: #1b160f;
+  stroke-width: 2.4;
+}
+
+.handle.haul {
+  stroke: #ffe082;
+}
+
+.handle.line {
+  stroke: #9ccc65;
+}
+
+.handle.draft {
+  stroke: #ef6c00;
+}
+
+.handle.area {
+  stroke: #ffe082;
+}
+
+.handle.measure {
+  stroke: #fff59d;
+}
+
+.dim-witness {
+  fill: none;
+  stroke: #fff8e7;
+  stroke-width: 1.2;
+  opacity: 0.85;
+}
+
+.dim-line {
+  fill: none;
+  stroke: #fff59d;
+  stroke-width: 1.6;
+}
+
+.dim.selected .dim-line {
+  stroke: #ffe082;
+  stroke-width: 2.2;
+}
+
+.dim-ticks {
+  fill: none;
+  stroke: #fff59d;
+  stroke-width: 1.8;
+  stroke-linecap: square;
+}
+
+.dim-label rect {
+  fill: #2a3122;
+  stroke: #fff59d;
+  stroke-width: 1;
+}
+
+.dim-label text {
+  fill: #fff8e7;
+  font: 700 11px "Segoe UI", sans-serif;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.dim-snap {
+  fill: none;
+  stroke: #ffe082;
+  stroke-width: 2;
+}
+
+.actor-truck {
+  pointer-events: none;
+}
+
+.actor-excavator {
+  transform-box: fill-box;
+}
+
+.actor-excavator .exc-boom {
+  transform-box: fill-box;
+  transform-origin: 8% 70%;
+  animation: dig 2.6s ease-in-out infinite;
+}
+
+.actor-excavator.selected .exc-house rect:first-child {
+  stroke: #ffe082;
+}
+
+@keyframes dig {
+  0%,
+  100% {
+    transform: rotate(6deg);
+  }
+  50% {
+    transform: rotate(-16deg);
+  }
+}
+
+.truck-wheels circle:nth-child(odd) {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spin-wheel 0.6s linear infinite;
+}
+
+.actor-truck.return .truck-body > rect:first-child {
+  fill: #1e88e5;
+  stroke: #0d47a1;
+}
+
+.actor-truck.load .truck-load,
+.actor-truck.return .truck-load {
+  display: none;
+}
+
+.actor-truck .truck-body {
+  animation: bounce-truck 0.28s ease-in-out infinite alternate;
+}
+
+@keyframes bounce-truck {
+  to {
+    transform: translateY(-1.5px);
+  }
+}
+
+@keyframes spin-wheel {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.scale-chip {
+  fill: rgba(27, 22, 15, 0.78);
+}
+
+.scale-chip-text {
+  fill: #fff8e7;
+  font: 11px "Segoe UI", sans-serif;
+}
+
+.hint {
+  margin: 0;
+  padding: 8px 14px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.section-break {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.selected-line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.selected-line strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.selection-meta {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stack select {
+  width: 100%;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 1fr 48px;
+  gap: 6px;
+  align-items: center;
+}
+
+.field input {
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.field span {
+  font-size: 11px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.results {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+dl {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero {
+  margin-top: 6px;
+  padding: 10px 0 0;
+  border-top: 1px dashed var(--line);
+}
+
+.hero dt,
+.hero dd {
+  color: var(--accent-2);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.constraint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--good);
+}
+
+@media (max-width: 960px) {
+  .topbar,
+  .workspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel {
+    width: 100%;
+  }
+}
