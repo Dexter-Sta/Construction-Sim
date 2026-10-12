@@ -223,8 +223,169 @@ button:disabled {
 }
 
 #site.drawing,
-#site.measuring {
+#site.measuring,
+#site.grading {
   cursor: crosshair;
+}
+
+.grade-brush {
+  fill: rgba(255, 224, 130, 0.12);
+  stroke: #ffe082;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  pointer-events: none;
+}
+
+.terrain-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.terrain-bar label {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+}
+
+.terrain-bar input[type="range"] {
+  width: 84px;
+  padding: 0;
+  accent-color: var(--accent);
+  background: transparent;
+  border: 0;
+}
+
+.view-toggle {
+  display: inline-flex;
+}
+
+.view-toggle button {
+  border-radius: 0;
+}
+
+.view-toggle button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.view-toggle button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.view-toggle button + button {
+  margin-left: -1px;
+}
+
+.view-toggle button[aria-pressed="true"],
+#gradeBtn[aria-pressed="true"] {
+  background: #3a3320;
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+  position: relative;
+}
+
+.elev-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+#drawPopover {
+  min-width: 210px;
+}
+
+#drawPopover [hidden] {
+  display: none;
+}
+
+.views[data-view="plan"] .view3d {
+  display: none;
+}
+
+.views[data-view="3d"] #site {
+  display: none;
+}
+
+.view3d {
+  position: relative;
+  height: 520px;
+  border-top: 1px solid var(--line);
+  background: #b9d4e8;
+}
+
+.views[data-view="3d"] .view3d {
+  height: 680px;
+  border-top: 0;
+}
+
+.view3d canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.view3d-help {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #fff8e7;
+  background: rgba(27, 22, 15, 0.6);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.view3d-reset {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  font-size: 12px;
+  background: rgba(30, 35, 24, 0.85);
+}
+
+.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.check input {
+  accent-color: var(--accent);
+}
+
+input[readonly] {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.popover-design {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popover-design[hidden] {
+  display: none;
+}
+
+.popover-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .ground-base {
@@ -247,17 +408,18 @@ button:disabled {
 }
 
 .work-area.cut .pit {
-  fill: #8d6840;
+  fill: rgba(141, 104, 64, 0.08);
   stroke: #5c4024;
 }
 
-.work-area.cut .pit-hole {
-  fill: #5a3f24;
+.work-area.fill .pit {
+  fill: rgba(215, 176, 122, 0.08);
+  stroke: #2f5f8a;
 }
 
-.work-area.fill .pit {
-  fill: #d7b07a;
-  stroke: #9a7344;
+.work-area .pit-hole,
+.work-area .mound {
+  display: none;
 }
 
 .work-area.selected .pit {
@@ -324,8 +486,20 @@ button:disabled {
   stroke-linejoin: round;
 }
 
+.line-path.on-surface {
+  stroke: #ffe082;
+  stroke-width: 4;
+}
+
 .line-path.selected {
   stroke: #9ccc65;
+}
+
+.tin-edges {
+  fill: none;
+  stroke: rgba(42, 33, 22, 0.55);
+  stroke-width: 1.15;
+  pointer-events: none;
 }
 
 .draw-fill {

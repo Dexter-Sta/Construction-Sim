@@ -78,6 +78,46 @@
               <button type="button" id="straightenBtn">Straight haul</button>
             </div>
           </div>
+          <div class="terrain-bar">
+            <div class="view-toggle" role="group" aria-label="View">
+              <button type="button" data-view="plan" aria-pressed="false">Plan</button>
+              <button type="button" data-view="split" aria-pressed="true">Split</button>
+              <button type="button" data-view="3d" aria-pressed="false">3D</button>
+            </div>
+            <button type="button" id="gradeBtn" aria-pressed="false">Grade ground</button>
+            <label>
+              Brush
+              <select id="gradeMode">
+                <option value="raise">Raise</option>
+                <option value="lower">Lower</option>
+                <option value="flatten">Flatten</option>
+                <option value="smooth">Smooth</option>
+              </select>
+            </label>
+            <label>
+              Size
+              <input id="gradeRadius" type="range" min="10" max="140" step="5" value="45" />
+            </label>
+            <label>
+              Strength
+              <input id="gradeStrength" type="range" min="1" max="30" step="1" value="8" />
+            </label>
+            <label>
+              Vertical
+              <input id="vexag" type="range" min="1" max="12" step="0.5" value="6" />
+              <span id="vexagOut">6×</span>
+            </label>
+            <label class="check">
+              <input id="showExisting" type="checkbox" checked />
+              Existing ground
+            </label>
+            <button type="button" id="resetGroundBtn">Reset ground</button>
+            <span class="elev-readout">
+              <span id="tinReadout">Surface: set elevations on lines</span>
+              <span id="elevReadout">Hover the site for elevation</span>
+            </span>
+          </div>
+          <div class="views" id="views" data-view="split">
           <svg
             id="site"
             viewBox="0 0 960 620"
@@ -211,8 +251,16 @@
 
             <g class="site-ground">
               <rect width="960" height="620" class="ground-base" />
-              <rect width="960" height="620" fill="url(#dirt-dots)" />
-              <rect width="960" height="620" fill="url(#grass-tufts)" />
+              <image
+                id="terrainImage"
+                x="0"
+                y="0"
+                width="960"
+                height="620"
+                preserveAspectRatio="none"
+              />
+              <rect width="960" height="620" fill="url(#dirt-dots)" opacity="0.45" />
+              <rect width="960" height="620" fill="url(#grass-tufts)" opacity="0.5" />
               <g class="site-props" opacity="0.9">
                 <g transform="translate(430 80)">
                   <rect x="-6" y="-18" width="12" height="22" rx="2" fill="#ff8a1f" stroke="#c45a00" stroke-width="1.5" />
@@ -226,17 +274,45 @@
             </g>
 
             <g id="layer-areas"></g>
+            <g id="layer-surface">
+              <path id="tinEdges" class="tin-edges" />
+            </g>
             <g id="layer-linework"></g>
             <g id="layer-haul"></g>
             <g id="layer-actors"></g>
             <g id="layer-measures"></g>
             <g id="layer-ui"></g>
           </svg>
+          <div id="view3d" class="view3d">
+            <p class="view3d-help">
+              Drag to orbit · right-drag to pan · scroll to zoom · click a machine to select it
+            </p>
+            <button type="button" id="resetCameraBtn" class="view3d-reset">Reset camera</button>
+          </div>
+          </div>
           <div id="drawPopover" class="area-popover" hidden>
-            <label>
+            <label id="drawTextFields">
               Text
               <input id="drawTextInput" type="text" maxlength="80" />
             </label>
+            <div id="drawElevFields" class="popover-design">
+              <label>
+                Start elevation
+                <span class="field">
+                  <input id="drawElevStart" type="number" step="0.5" />
+                  <span>ft</span>
+                </span>
+              </label>
+              <label id="drawElevEndLabel">
+                End elevation
+                <span class="field">
+                  <input id="drawElevEnd" type="number" step="0.5" placeholder="level" />
+                  <span>ft</span>
+                </span>
+              </label>
+              <button type="button" id="drawUseGroundBtn">Use ground elevation</button>
+              <p class="popover-note" id="drawSurfaceNote"></p>
+            </div>
           </div>
           <div id="areaPopover" class="area-popover" hidden>
             <label>
@@ -251,6 +327,23 @@
                 <option value="fill">Fill</option>
               </select>
             </label>
+            <div id="areaDesignFields" class="popover-design">
+              <label>
+                Pad elevation
+                <span class="field">
+                  <input id="areaDesignElev" type="number" step="0.5" />
+                  <span>ft</span>
+                </span>
+              </label>
+              <label>
+                Side slope
+                <span class="field">
+                  <input id="areaSideSlope" type="number" min="0.25" step="0.5" />
+                  <span>H:1V</span>
+                </span>
+              </label>
+              <p class="popover-note" id="areaVolume"></p>
+            </div>
           </div>
           <p class="hint" id="hint">
             Add work areas and drag the corners to size them. Measure lengths
@@ -320,6 +413,10 @@
                 />
                 <span>cy</span>
               </span>
+            </label>
+            <label class="check">
+              <input id="useSurfaceVolume" type="checkbox" checked />
+              Take cut volume from cut surfaces
             </label>
 
             <label>
@@ -414,6 +511,10 @@
             <h2>Durations</h2>
             <dl id="results">
               <div>
+                <dt>Surface cut / fill</dt>
+                <dd id="outEarthwork">—</dd>
+              </div>
+              <div>
                 <dt>Haul distance</dt>
                 <dd id="outDistance">—</dd>
               </div>
@@ -443,6 +544,16 @@
         </aside>
       </main>
     </div>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three.module.js",
+          "three/addons/": "./vendor/"
+        }
+      }
+    </script>
+    <script src="surface.js"></script>
     <script src="app.js"></script>
+    <script type="module" src="view3d.js"></script>
   </body>
 </html>

@@ -114,14 +114,31 @@ const EQUIP_CATALOG = {
 
 const state = {
   feetPerPx: 4,
-  nextId: 4,
+  nextId: 5,
   selectedId: 1,
   focus: { kind: "equipment", id: 1 },
-  equipment: [{ id: 1, type: "excavator", x: 180, y: 310, rate: 380, haulId: 3, areaId: null }],
-  workAreas: [],
+  equipment: [{ id: 1, type: "excavator", x: 180, y: 310, rate: 380, haulId: 3, areaId: 4 }],
+  workAreas: [
+    {
+      id: 4,
+      kind: "cut",
+      name: "Cut 1",
+      x: 100,
+      y: 225,
+      w: 220,
+      h: 150,
+      designElev: null,
+      sideSlope: 2,
+    },
+  ],
   drawings: [],
   drawing: false,
   measuring: false,
+  grading: false,
+  hoverPt: null,
+  view: "split",
+  vexag: 6,
+  showExisting: true,
   drawKind: "line",
   freehand: false,
   draft: [],
@@ -142,6 +159,475 @@ const state = {
   drag: null,
   trucks: [],
 };
+
+const GRID = 5;
+const DATUM = 100;
+const CONTOUR_FT = 2;
+const MIN_ELEV = DATUM - 80;
+const MAX_ELEV = DATUM + 120;
+const terrain = {
+  cols: SITE.w / GRID + 1,
+  rows: SITE.h / GRID + 1,
+  ground: null,
+  final: null,
+  version: 0,
+  surfaceVersion: 0,
+  surfaceKey: "",
+  minH: 0,
+  maxH: 1,
+  cut: 0,
+  fill: 0,
+  areaVolumes: new Map(),
+  tin: { vertices: [], triangles: [] },
+  tinTris: [],
+  tinVersion: 0,
+  tinKey: "",
+};
+terrain.ground = new Float32Array(terrain.cols * terrain.rows);
+terrain.final = new Float32Array(terrain.cols * terrain.rows);
+
+const grade = { active: false, pos: null, target: 0 };
+
+function initialGround(x, y) {
+  const hill = 42 * Math.exp(-((x - 210) ** 2 + (y - 300) ** 2) / (2 * 130 ** 2));
+  const ridge =
+    16 * Math.exp(-((x - 620) ** 2) / (2 * 90 ** 2)) * (0.6 + 0.4 * Math.sin(y / 90));
+  const roll = 4 * Math.sin(x / 110 + 1.3) * Math.cos(y / 95);
+  const tilt = -14 * (x / SITE.w) + 5 * (y / SITE.h);
+  return DATUM + hill + ridge + roll + tilt;
+}
+
+function resetGround() {
+  const { cols, rows, ground } = terrain;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) ground[r * cols + c] = initialGround(c * GRID, r * GRID);
+  }
+  terrain.version++;
+}
+
+function sampleGrid(arr, x, y) {
+  const { cols, rows } = terrain;
+  const fx = Math.max(0, Math.min(cols - 1.0001, x / GRID));
+  const fy = Math.max(0, Math.min(rows - 1.0001, y / GRID));
+  const c = Math.floor(fx);
+  const r = Math.floor(fy);
+  const u = fx - c;
+  const v = fy - r;
+  const i = r * cols + c;
+  return (
+    arr[i] * (1 - u) * (1 - v) +
+    arr[i + 1] * u * (1 - v) +
+    arr[i + cols] * (1 - u) * v +
+    arr[i + cols + 1] * u * v
+  );
+}
+
+function groundAt(p) {
+  return sampleGrid(terrain.ground, p.x, p.y);
+}
+
+function surfaceAt(p) {
+  return sampleGrid(terrain.final, p.x, p.y);
+}
+
+function meanGround(area) {
+  const { cols, ground } = terrain;
+  const c0 = Math.ceil(area.x / GRID);
+  const c1 = Math.floor((area.x + area.w) / GRID);
+  const r0 = Math.ceil(area.y / GRID);
+  const r1 = Math.floor((area.y + area.h) / GRID);
+  let sum = 0;
+  let n = 0;
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      sum += ground[r * cols + c];
+      n++;
+    }
+  }
+  return n ? sum / n : groundAt({ x: area.x + area.w / 2, y: area.y + area.h / 2 });
+}
+
+function ensureDesign(area) {
+  if (area.kind === "zone") return;
+  if (!Number.isFinite(area.designElev)) {
+    const mean = meanGround(area);
+    area.designElev = Math.round(area.kind === "cut" ? mean - 12 : mean + 6);
+  }
+  if (!Number.isFinite(area.sideSlope) || area.sideSlope <= 0) area.sideSlope = 2;
+}
+
+function rectGap(x, y, area) {
+  const dx = Math.max(area.x - x, 0, x - area.x - area.w);
+  const dy = Math.max(area.y - y, 0, y - area.y - area.h);
+  return Math.hypot(dx, dy);
+}
+
+const SURFACE_GRADED = new Set(["line", "polyline", "arc", "freehand", "spline", "arrow"]);
+const SURFACE_LEVEL = new Set(["rect", "polygon", "circle", "hatch", "point"]);
+
+function surfaceKind(kind) {
+  return SURFACE_GRADED.has(kind) || SURFACE_LEVEL.has(kind);
+}
+
+function decimateStroke(points, step) {
+  if (points.length <= 2) return points.map((p) => ({ x: p.x, y: p.y }));
+  const out = [{ x: points[0].x, y: points[0].y }];
+  for (let i = 1; i < points.length - 1; i++) {
+    const last = out[out.length - 1];
+    if (Math.hypot(points[i].x - last.x, points[i].y - last.y) >= step) {
+      out.push({ x: points[i].x, y: points[i].y });
+    }
+  }
+  const end = points[points.length - 1];
+  const last = out[out.length - 1];
+  if (Math.hypot(end.x - last.x, end.y - last.y) > 0.5) out.push({ x: end.x, y: end.y });
+  if (out.length <= 80) return out;
+  const stride = Math.ceil(out.length / 80);
+  const slim = out.filter((_, i) => i % stride === 0);
+  const tail = out[out.length - 1];
+  if (slim[slim.length - 1] !== tail) slim.push(tail);
+  return slim;
+}
+
+function elevLabel(drawing) {
+  if (!Number.isFinite(drawing?.z0)) return "";
+  if (
+    SURFACE_GRADED.has(drawing.kind) &&
+    Number.isFinite(drawing.z1) &&
+    drawing.z1 !== drawing.z0
+  ) {
+    return `${drawing.z0}–${drawing.z1} ft`;
+  }
+  return `${drawing.z0} ft`;
+}
+
+function lineworkFromDrawings(drawings) {
+  const lines = [];
+  for (const drawing of drawings) {
+    if (!surfaceKind(drawing.kind) || !Number.isFinite(drawing.z0)) continue;
+    const z1 = Number.isFinite(drawing.z1) ? drawing.z1 : drawing.z0;
+    if (drawing.kind === "point") {
+      const p = drawing.points[0];
+      if (p) lines.push({ points: [{ x: p.x, y: p.y, z: drawing.z0 }] });
+      continue;
+    }
+    const stroke = decimateStroke(drawingStroke(drawing), 8);
+    if (stroke.length < 2) continue;
+    const level = SURFACE_LEVEL.has(drawing.kind);
+    let total = 0;
+    const at = [0];
+    for (let i = 1; i < stroke.length; i++) {
+      total += Math.hypot(stroke[i].x - stroke[i - 1].x, stroke[i].y - stroke[i - 1].y);
+      at.push(total);
+    }
+    lines.push({
+      closed: level,
+      points: stroke.map((p, i) => ({
+        x: p.x,
+        y: p.y,
+        z: level || total === 0 ? drawing.z0 : drawing.z0 + ((z1 - drawing.z0) * at[i]) / total,
+      })),
+    });
+  }
+  return lines;
+}
+
+function indexTin(tin) {
+  const tris = [];
+  const { vertices, triangles } = tin;
+  for (let i = 0; i < triangles.length; i += 3) {
+    const a = vertices[triangles[i]];
+    const b = vertices[triangles[i + 1]];
+    const c = vertices[triangles[i + 2]];
+    const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (Math.abs(area) < 1e-6) continue;
+    tris.push({
+      a,
+      b,
+      c,
+      area,
+      minX: Math.min(a.x, b.x, c.x),
+      maxX: Math.max(a.x, b.x, c.x),
+      minY: Math.min(a.y, b.y, c.y),
+      maxY: Math.max(a.y, b.y, c.y),
+    });
+  }
+  return tris;
+}
+
+function sampleTin(x, y) {
+  for (const t of terrain.tinTris) {
+    if (x < t.minX || x > t.maxX || y < t.minY || y > t.maxY) continue;
+    const { a, b, c, area } = t;
+    const w0 = ((b.x - x) * (c.y - y) - (b.y - y) * (c.x - x)) / area;
+    const w1 = ((c.x - x) * (a.y - y) - (c.y - y) * (a.x - x)) / area;
+    const w2 = ((a.x - x) * (b.y - y) - (a.y - y) * (b.x - x)) / area;
+    if (w0 >= -1e-4 && w1 >= -1e-4 && w2 >= -1e-4) return w0 * a.z + w1 * b.z + w2 * c.z;
+  }
+  return null;
+}
+
+function rebuildTin() {
+  const lines = lineworkFromDrawings(state.drawings);
+  const key = JSON.stringify(lines);
+  if (key === terrain.tinKey) return;
+  terrain.tinKey = key;
+  terrain.tin = createSurfaceFromLinework(lines);
+  terrain.tinTris = indexTin(terrain.tin);
+  terrain.tinVersion++;
+}
+
+function updateSurface() {
+  rebuildTin();
+  const shaped = state.workAreas.filter((a) => a.kind !== "zone");
+  shaped.forEach(ensureDesign);
+  const key = `${terrain.version}|${terrain.tinVersion}|${state.feetPerPx}|${shaped
+    .map((a) => [a.id, a.kind, a.x, a.y, a.w, a.h, a.designElev, a.sideSlope].join(","))
+    .join(";")}`;
+  if (key === terrain.surfaceKey) return;
+  terrain.surfaceKey = key;
+
+  const { cols, rows, ground, final } = terrain;
+  const fpp = state.feetPerPx;
+  const cellCy = (GRID * fpp) ** 2 / 27;
+  const perArea = new Map(shaped.map((a) => [a.id, 0]));
+  let cut = 0;
+  let fill = 0;
+  let minH = Infinity;
+  let maxH = -Infinity;
+  for (let r = 0; r < rows; r++) {
+    const y = r * GRID;
+    for (let c = 0; c < cols; c++) {
+      const x = c * GRID;
+      const i = r * cols + c;
+      const g = ground[i];
+      const tinZ = sampleTin(x, y);
+      let z = g;
+      if (tinZ == null) {
+        for (const a of shaped) {
+          const rise = (rectGap(x, y, a) * fpp) / a.sideSlope;
+          if (a.kind === "cut") {
+            const design = a.designElev + rise;
+            if (design < g) perArea.set(a.id, perArea.get(a.id) + (g - design) * cellCy);
+            if (design < z) z = design;
+          } else {
+            const design = a.designElev - rise;
+            if (design > g) perArea.set(a.id, perArea.get(a.id) + (design - g) * cellCy);
+            if (design > z) z = design;
+          }
+        }
+      } else {
+        z = tinZ;
+      }
+      final[i] = z;
+      if (z < g) cut += (g - z) * cellCy;
+      else fill += (z - g) * cellCy;
+      if (z < minH) minH = z;
+      if (z > maxH) maxH = z;
+    }
+  }
+  terrain.cut = cut;
+  terrain.fill = fill;
+  terrain.minH = minH;
+  terrain.maxH = maxH;
+  terrain.areaVolumes = perArea;
+  terrain.surfaceVersion++;
+}
+
+function gradeSettings() {
+  return {
+    mode: document.getElementById("gradeMode").value,
+    radius: Number(document.getElementById("gradeRadius").value) || 45,
+    strength: Number(document.getElementById("gradeStrength").value) || 8,
+  };
+}
+
+function beginGrade(p) {
+  grade.active = true;
+  grade.pos = p;
+  grade.target = groundAt(p);
+  state.hoverPt = p;
+}
+
+function moveGrade(p) {
+  if (grade.active) grade.pos = p;
+  state.hoverPt = p;
+}
+
+function endGrade() {
+  grade.active = false;
+}
+
+function applyGrade(dt) {
+  if (!grade.active || !grade.pos || dt <= 0) return;
+  const { mode, radius, strength } = gradeSettings();
+  const { cols, rows, ground } = terrain;
+  const { x, y } = grade.pos;
+  const c0 = Math.max(0, Math.floor((x - radius) / GRID));
+  const c1 = Math.min(cols - 1, Math.ceil((x + radius) / GRID));
+  const r0 = Math.max(0, Math.floor((y - radius) / GRID));
+  const r1 = Math.min(rows - 1, Math.ceil((y + radius) / GRID));
+  const ease = Math.min(1, (strength / 8) * dt * 4);
+  const src = mode === "smooth" ? ground.slice() : ground;
+  const at = (c, r) =>
+    src[Math.max(0, Math.min(rows - 1, r)) * cols + Math.max(0, Math.min(cols - 1, c))];
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const d = Math.hypot(c * GRID - x, r * GRID - y);
+      if (d > radius) continue;
+      const f = 0.5 + 0.5 * Math.cos((Math.PI * d) / radius);
+      const i = r * cols + c;
+      let h = ground[i];
+      if (mode === "raise") h += strength * dt * f;
+      else if (mode === "lower") h -= strength * dt * f;
+      else if (mode === "flatten") h += (grade.target - h) * ease * f;
+      else {
+        const avg =
+          (at(c - 2, r) + at(c + 2, r) + at(c, r - 2) + at(c, r + 2) +
+            at(c - 2, r - 2) + at(c + 2, r - 2) + at(c - 2, r + 2) + at(c + 2, r + 2)) /
+          8;
+        h += (avg - src[i]) * ease * f;
+      }
+      ground[i] = Math.max(MIN_ELEV, Math.min(MAX_ELEV, h));
+    }
+  }
+  terrain.version++;
+}
+
+const RAMP_LOW = [104, 148, 66];
+const RAMP_HIGH = [200, 184, 112];
+const CUT_RGB = [214, 96, 44];
+const FILL_RGB = [64, 132, 200];
+
+function earthColor(h, depth, out) {
+  const span = terrain.maxH - terrain.minH || 1;
+  const t = Math.max(0, Math.min(1, (h - terrain.minH) / span));
+  let r = RAMP_LOW[0] + (RAMP_HIGH[0] - RAMP_LOW[0]) * t;
+  let g = RAMP_LOW[1] + (RAMP_HIGH[1] - RAMP_LOW[1]) * t;
+  let b = RAMP_LOW[2] + (RAMP_HIGH[2] - RAMP_LOW[2]) * t;
+  const tint = depth > 0.05 ? CUT_RGB : depth < -0.05 ? FILL_RGB : null;
+  if (tint) {
+    const k = Math.min(0.85, 0.35 + Math.abs(depth) / 14);
+    r += (tint[0] - r) * k;
+    g += (tint[1] - g) * k;
+    b += (tint[2] - b) * k;
+  }
+  out[0] = r;
+  out[1] = g;
+  out[2] = b;
+  return out;
+}
+
+function surfaceRGB(i, out) {
+  return earthColor(terrain.final[i], terrain.ground[i] - terrain.final[i], out);
+}
+
+const TEX = { w: SITE.w / 2, h: SITE.h / 2, canvas: null, ctx: null, img: null, version: -1, at: 0 };
+
+function renderTerrainImage(force = false) {
+  if (TEX.version === terrain.surfaceVersion) return;
+  const now = performance.now();
+  if (!force && grade.active && now - TEX.at < 120) return;
+  const { w, h } = TEX;
+  if (!TEX.canvas) {
+    TEX.canvas = document.createElement("canvas");
+    TEX.canvas.width = w;
+    TEX.canvas.height = h;
+    TEX.ctx = TEX.canvas.getContext("2d");
+    TEX.img = TEX.ctx.createImageData(w, h);
+    TEX.heights = new Float32Array(w * h);
+    TEX.depth = new Float32Array(w * h);
+  }
+  const { heights, depth } = TEX;
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const k = py * w + px;
+      const x = (px + 0.5) * 2;
+      const y = (py + 0.5) * 2;
+      const z = sampleGrid(terrain.final, x, y);
+      heights[k] = z;
+      depth[k] = sampleGrid(terrain.ground, x, y) - z;
+    }
+  }
+  const data = TEX.img.data;
+  const spacing = 2 * state.feetPerPx;
+  const exag = 3;
+  const light = [-0.55, -0.55, 0.63];
+  const rgb = [0, 0, 0];
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const k = py * w + px;
+      const h0 = heights[k];
+      const hl = heights[px > 0 ? k - 1 : k];
+      const hr = heights[px < w - 1 ? k + 1 : k];
+      const hu = heights[py > 0 ? k - w : k];
+      const hd = heights[py < h - 1 ? k + w : k];
+      const nx = (-(hr - hl) / (2 * spacing)) * exag;
+      const ny = (-(hd - hu) / (2 * spacing)) * exag;
+      const len = Math.hypot(nx, ny, 1);
+      const dot = (nx * light[0] + ny * light[1] + light[2]) / len;
+      const shade = Math.max(0.55, Math.min(1.15, 0.4 + 0.75 * dot));
+      earthColor(h0, depth[k], rgb);
+      const b = Math.floor(h0 / CONTOUR_FT);
+      const br = Math.floor(hr / CONTOUR_FT);
+      const bd = Math.floor(hd / CONTOUR_FT);
+      let line = 1;
+      if (b !== br || b !== bd) line = Math.max(b, br, bd) % 5 === 0 ? 0.55 : 0.78;
+      const o = k * 4;
+      data[o] = Math.min(255, rgb[0] * shade * line);
+      data[o + 1] = Math.min(255, rgb[1] * shade * line);
+      data[o + 2] = Math.min(255, rgb[2] * shade * line);
+      data[o + 3] = 255;
+    }
+  }
+  TEX.ctx.putImageData(TEX.img, 0, 0);
+  document.getElementById("terrainImage").setAttribute("href", TEX.canvas.toDataURL());
+  TEX.version = terrain.surfaceVersion;
+  TEX.at = now;
+}
+
+let readoutText = "";
+
+function updateReadout() {
+  const faces = terrain.tin.triangles.length / 3;
+  const tinText = faces ? `Surface ${faces} triangles` : "Surface: set elevations on lines";
+  const tinEl = document.getElementById("tinReadout");
+  if (tinEl.textContent !== tinText) tinEl.textContent = tinText;
+  const p = state.hoverPt;
+  let text = "Hover the site for elevation";
+  if (p) {
+    const s = surfaceAt(p);
+    const g = groundAt(p);
+    const diff = g - s;
+    text = `Elev ${s.toFixed(1)} ft`;
+    if (Math.abs(diff) > 0.05) {
+      text += ` · existing ${g.toFixed(1)} ft · ${diff > 0 ? "cut" : "fill"} ${Math.abs(diff).toFixed(1)} ft`;
+    }
+  }
+  if (text !== readoutText) {
+    document.getElementById("elevReadout").textContent = text;
+    readoutText = text;
+  }
+}
+
+function formatCy(cy) {
+  return `${Math.round(cy).toLocaleString()} cy`;
+}
+
+function focusItem(kind, id) {
+  if (kind === "equipment") state.selectedId = id;
+  state.focus = { kind, id };
+  syncSelectionPanel();
+}
+
+function setView(view) {
+  state.view = view;
+  document.getElementById("views").dataset.view = view;
+  document.querySelectorAll(".view-toggle [data-view]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", btn.dataset.view === view ? "true" : "false");
+  });
+  syncSelectionPanel();
+}
 
 function specFor(piece) {
   return EQUIP_CATALOG[piece.type] || EQUIP_CATALOG.excavator;
@@ -422,7 +908,13 @@ function averageLoadRate() {
 function setTool(next) {
   if (state.drawing && next !== "draw") finishDraft();
   if (state.measuring && next !== "measure") finishMeasure();
-  const current = state.drawing ? "draw" : state.measuring ? "measure" : null;
+  const current = state.drawing
+    ? "draw"
+    : state.measuring
+      ? "measure"
+      : state.grading
+        ? "grade"
+        : null;
   const tool = current === next ? null : next;
   if (!tool) {
     if (current === "draw") finishDraft();
@@ -431,12 +923,16 @@ function setTool(next) {
     }
     state.hover = null;
   }
+  if (tool !== "grade") endGrade();
   state.drawing = tool === "draw";
   state.measuring = tool === "measure";
+  state.grading = tool === "grade";
   document.getElementById("drawLineBtn").setAttribute("aria-pressed", state.drawing ? "true" : "false");
   document.getElementById("measureBtn").setAttribute("aria-pressed", state.measuring ? "true" : "false");
+  document.getElementById("gradeBtn").setAttribute("aria-pressed", state.grading ? "true" : "false");
   svg.classList.toggle("drawing", state.drawing);
   svg.classList.toggle("measuring", state.measuring);
+  svg.classList.toggle("grading", state.grading);
   updateHint();
 }
 
@@ -467,8 +963,13 @@ function updateHint() {
       "Click start, then end. Snaps to machines, dumps, corners, and vertices. Shift locks a horizontal or vertical dimension.";
     return;
   }
+  if (state.grading) {
+    const mode = document.getElementById("gradeMode").value;
+    hint.textContent = `Click and drag on the plan or the 3D view to ${mode} the existing ground. Size and strength are in the terrain bar. Esc exits.`;
+    return;
+  }
   hint.textContent =
-    "Pick a Draw tool, then Draw. Measure lengths. Assign equipment to a work area and haul route.";
+    "Draw a line and set its elevation. Elevated lines are triangulated into a surface. A second elevation grades the line from start to end.";
 }
 
 function syncSelectionPanel() {
@@ -540,8 +1041,11 @@ function syncSelectionPanel() {
     const area = findArea(id);
     const assigned = area ? equipmentOnArea(area.id) : [];
     const names = assigned.map(equipmentLabel).join(", ");
+    const shaped = area && area.kind !== "zone" && Number.isFinite(area.designElev);
     metaEl.textContent = [
       area ? `${pxToFt(area.w).toFixed(0)} × ${pxToFt(area.h).toFixed(0)} ft` : "",
+      shaped ? `Pad ${area.designElev} ft at ${area.sideSlope}:1` : "",
+      shaped ? `${area.kind === "cut" ? "Cut" : "Fill"} ${formatCy(terrain.areaVolumes.get(area.id) || 0)}` : "",
       names ? `Equipment: ${names}` : "No equipment assigned.",
     ]
       .filter(Boolean)
@@ -601,17 +1105,43 @@ function hideDrawPopover() {
   document.getElementById("drawPopover").hidden = true;
 }
 
+function readElev(input) {
+  const value = input.value.trim();
+  if (value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(MIN_ELEV, Math.min(MAX_ELEV, n)) : null;
+}
+
 function syncDrawPopover() {
   const pop = document.getElementById("drawPopover");
   const drawing =
     state.focus.kind === "drawing" ? findDrawing(state.focus.id) : null;
-  if (!drawing || (drawing.kind !== "text" && drawing.kind !== "leader")) {
+  const showText = drawing && (drawing.kind === "text" || drawing.kind === "leader");
+  const showElev = drawing && surfaceKind(drawing.kind);
+  if ((!showText && !showElev) || state.view === "3d") {
     pop.hidden = true;
     return;
   }
   pop.hidden = false;
-  const input = document.getElementById("drawTextInput");
-  if (document.activeElement !== input) input.value = drawing.text || "";
+  document.getElementById("drawTextFields").hidden = !showText;
+  document.getElementById("drawElevFields").hidden = !showElev;
+  if (showText) {
+    const input = document.getElementById("drawTextInput");
+    if (document.activeElement !== input) input.value = drawing.text || "";
+  }
+  if (showElev) {
+    const start = document.getElementById("drawElevStart");
+    const end = document.getElementById("drawElevEnd");
+    if (document.activeElement !== start) start.value = Number.isFinite(drawing.z0) ? String(drawing.z0) : "";
+    if (document.activeElement !== end) end.value = Number.isFinite(drawing.z1) ? String(drawing.z1) : "";
+    document.getElementById("drawElevEndLabel").hidden = !SURFACE_GRADED.has(drawing.kind);
+    const faces = terrain.tin.triangles.length / 3;
+    document.getElementById("drawSurfaceNote").textContent = Number.isFinite(drawing.z0)
+      ? faces
+        ? `In the surface · ${faces} triangles`
+        : "Add elevations until the points are not all in one line."
+      : "Set an elevation to include this line in the surface.";
+  }
   positionDrawPopover(drawing);
 }
 
@@ -623,14 +1153,14 @@ function positionDrawPopover(drawing) {
   const pt = drawing.kind === "leader" ? drawing.points[drawing.points.length - 1] : drawing.points[0];
   const x = (pt.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
   const y = (pt.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
-  pop.style.left = `${Math.min(x + 12, wrapRect.width - 190)}px`;
-  pop.style.top = `${Math.min(y + 20, wrapRect.height - 90)}px`;
+  pop.style.left = `${Math.min(x + 12, wrapRect.width - 220)}px`;
+  pop.style.top = `${Math.max(0, Math.min(y + 20, wrapRect.height - pop.offsetHeight - 8))}px`;
 }
 
 function syncAreaPopover() {
   const pop = document.getElementById("areaPopover");
   const area = state.focus.kind === "area" ? findArea(state.focus.id) : null;
-  if (!area) {
+  if (!area || state.view === "3d") {
     pop.hidden = true;
     return;
   }
@@ -639,6 +1169,17 @@ function syncAreaPopover() {
   const kindSelect = document.getElementById("areaKindSelect");
   if (document.activeElement !== nameInput) nameInput.value = area.name;
   if (document.activeElement !== kindSelect) kindSelect.value = area.kind;
+  const design = document.getElementById("areaDesignFields");
+  design.hidden = area.kind === "zone";
+  if (area.kind !== "zone") {
+    const elevInput = document.getElementById("areaDesignElev");
+    const slopeInput = document.getElementById("areaSideSlope");
+    if (document.activeElement !== elevInput) elevInput.value = String(area.designElev ?? "");
+    if (document.activeElement !== slopeInput) slopeInput.value = String(area.sideSlope ?? 2);
+    const vol = terrain.areaVolumes.get(area.id) || 0;
+    document.getElementById("areaVolume").textContent =
+      `${area.kind === "cut" ? "Cut" : "Fill"} ${formatCy(vol)} · existing avg ${meanGround(area).toFixed(1)} ft`;
+  }
   positionAreaPopover(area);
 }
 
@@ -650,7 +1191,7 @@ function positionAreaPopover(area) {
   const x = (area.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
   const y = (area.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
   pop.style.left = `${Math.min(x + 12, wrapRect.width - 190)}px`;
-  pop.style.top = `${Math.min(y + 36, wrapRect.height - 120)}px`;
+  pop.style.top = `${Math.max(0, Math.min(y + 36, wrapRect.height - pop.offsetHeight - 8))}px`;
 }
 
 function addEquipment() {
@@ -866,7 +1407,15 @@ function removeSelected() {
 }
 
 function compute() {
-  const volume = readNumber("volume");
+  const volInput = document.getElementById("volume");
+  const fromSurface =
+    document.getElementById("useSurfaceVolume").checked && terrain.cut > 0;
+  volInput.readOnly = fromSurface;
+  if (fromSurface && document.activeElement !== volInput) {
+    const shown = String(Math.round(terrain.cut));
+    if (volInput.value !== shown) volInput.value = shown;
+  }
+  const volume = fromSurface ? terrain.cut : readNumber("volume");
   const loaderRate = combinedLoadRate();
   const perMachine = averageLoadRate();
   const truckCap = readNumber("truckCap");
@@ -913,6 +1462,8 @@ function compute() {
 }
 
 function renderResults(result) {
+  document.getElementById("outEarthwork").textContent =
+    `${formatCy(terrain.cut)} / ${formatCy(terrain.fill)}`;
   document.getElementById("outDistance").textContent =
     `${result.haulFt.toFixed(0)} ft (${ftToMiles(result.haulFt).toFixed(2)} mi)`;
   document.getElementById("outLoad").textContent = formatMin(result.loadMin);
@@ -1188,6 +1739,12 @@ function drawingPath(drawing) {
 }
 
 function drawingMeta(drawing) {
+  const elev = elevLabel(drawing);
+  const base = drawingFacts(drawing);
+  return elev ? (base ? `${base} · ${elev}` : elev) : base;
+}
+
+function drawingFacts(drawing) {
   const pts = drawing.points;
   const kind = drawing.kind;
   if (kind === "circle" && pts.length >= 2) {
@@ -1311,6 +1868,7 @@ function drawSketch(drawing, selected, live, draft = false) {
   const classes = ["line-path"];
   if (selected) classes.push("selected");
   if (draft) classes.push("line-draft");
+  if (Number.isFinite(drawing.z0)) classes.push("on-surface");
   if (kind === "hatch") classes.push("draw-fill");
   if (kind === "polygon" || kind === "rect") classes.push("draw-closed");
   path.setAttribute("class", classes.join(" "));
@@ -1359,6 +1917,14 @@ function drawSketch(drawing, selected, live, draft = false) {
     text.setAttribute("y", tb.y + 17);
     text.textContent = tb.label;
     text.setAttribute("display", "block");
+  } else if (Number.isFinite(drawing.z0) && drawing.points[0]) {
+    box.setAttribute("display", "none");
+    const stroke = drawingStroke(drawing);
+    const mid = stroke[Math.floor(stroke.length / 2)] || drawing.points[0];
+    text.setAttribute("x", mid.x + 6);
+    text.setAttribute("y", mid.y - 6);
+    text.textContent = elevLabel(drawing);
+    text.setAttribute("display", "block");
   } else {
     box.setAttribute("display", "none");
     text.setAttribute("display", "none");
@@ -1388,7 +1954,37 @@ function drawSketch(drawing, selected, live, draft = false) {
   }
 }
 
+let tinPathVersion = -1;
+
+function drawTin() {
+  if (tinPathVersion === terrain.tinVersion) return;
+  tinPathVersion = terrain.tinVersion;
+  const path = document.getElementById("tinEdges");
+  const { vertices, triangles } = terrain.tin;
+  if (!triangles.length) {
+    path.setAttribute("d", "");
+    return;
+  }
+  const seen = new Set();
+  let d = "";
+  for (let i = 0; i < triangles.length; i += 3) {
+    const ids = [triangles[i], triangles[i + 1], triangles[i + 2]];
+    for (let e = 0; e < 3; e++) {
+      const a = ids[e];
+      const b = ids[(e + 1) % 3];
+      const k = a < b ? `${a}:${b}` : `${b}:${a}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const pa = vertices[a];
+      const pb = vertices[b];
+      d += `M${pa.x.toFixed(1)} ${pa.y.toFixed(1)}L${pb.x.toFixed(1)} ${pb.y.toFixed(1)}`;
+    }
+  }
+  path.setAttribute("d", d);
+}
+
 function drawSite() {
+  drawTin();
   const liveAreas = new Set();
   for (const area of state.workAreas) {
     liveAreas.add(`area-${area.id}`);
@@ -1519,6 +2115,16 @@ function drawSite() {
   scale.querySelector("line").setAttribute("x1", "58");
   scale.querySelector("line").setAttribute("x2", String(58 + barPx));
 
+  const brush = keyed(layerUi, "brush", () => svgEl("circle", { class: "grade-brush" }, layerUi));
+  if (state.grading && state.hoverPt) {
+    brush.setAttribute("cx", state.hoverPt.x);
+    brush.setAttribute("cy", state.hoverPt.y);
+    brush.setAttribute("r", gradeSettings().radius);
+    brush.setAttribute("display", "block");
+  } else {
+    brush.setAttribute("display", "none");
+  }
+
   if (state.focus.kind === "area") {
     const area = findArea(state.focus.id);
     if (area && !document.getElementById("areaPopover").hidden) {
@@ -1576,7 +2182,10 @@ function drawWorkArea(area) {
   const text = g.querySelector("text");
   text.setAttribute("x", area.x + 16);
   text.setAttribute("y", area.y + 24);
-  text.textContent = area.name;
+  text.textContent =
+    area.kind !== "zone" && Number.isFinite(area.designElev)
+      ? `${area.name} · pad ${area.designElev} ft`
+      : area.name;
   const handles = areaHandles(area);
   g.querySelectorAll("[data-corner]").forEach((handle) => {
     const pt = handles[handle.getAttribute("data-corner")];
@@ -1795,6 +2404,13 @@ function resizeArea(area, corner, p) {
 
 svg.addEventListener("pointerdown", (event) => {
   const p = clampPoint(sitePoint(event));
+  if (state.grading) {
+    if (event.button === 0) {
+      beginGrade(p);
+      svg.setPointerCapture(event.pointerId);
+    }
+    return;
+  }
   if (state.drawing) {
     const spec = drawSpec();
     const pt = drawPointer(event);
@@ -1868,6 +2484,11 @@ svg.addEventListener("pointerdown", (event) => {
 
 svg.addEventListener("pointermove", (event) => {
   const p = clampPoint(sitePoint(event));
+  state.hoverPt = p;
+  if (state.grading) {
+    moveGrade(p);
+    return;
+  }
   if (state.drawing) {
     const pt = drawPointer(event);
     if (state.freehand) {
@@ -1937,9 +2558,14 @@ svg.addEventListener("pointermove", (event) => {
 });
 
 svg.addEventListener("pointerup", () => {
+  endGrade();
   if (state.freehand) commitDrawing();
   state.drag = null;
   svg.classList.remove("dragging");
+});
+
+svg.addEventListener("pointerleave", () => {
+  if (!grade.active) state.hoverPt = null;
 });
 
 svg.addEventListener("dblclick", (event) => {
@@ -1982,7 +2608,36 @@ document.getElementById("areaNameInput").addEventListener("input", (event) => {
 });
 document.getElementById("areaKindSelect").addEventListener("change", (event) => {
   const area = findArea(state.focus.id);
-  if (area) area.kind = event.target.value;
+  if (!area) return;
+  area.kind = event.target.value;
+  area.designElev = null;
+});
+document.getElementById("areaDesignElev").addEventListener("input", (event) => {
+  const area = findArea(state.focus.id);
+  const value = Number(event.target.value);
+  if (area && event.target.value !== "" && Number.isFinite(value)) {
+    area.designElev = Math.max(MIN_ELEV, Math.min(MAX_ELEV, value));
+  }
+});
+document.getElementById("areaSideSlope").addEventListener("input", (event) => {
+  const area = findArea(state.focus.id);
+  const value = Number(event.target.value);
+  if (area && Number.isFinite(value) && value > 0) area.sideSlope = Math.max(0.25, value);
+});
+document.getElementById("gradeBtn").addEventListener("click", () => {
+  setTool("grade");
+});
+document.getElementById("gradeMode").addEventListener("change", updateHint);
+document.getElementById("resetGroundBtn").addEventListener("click", resetGround);
+document.querySelectorAll(".view-toggle [data-view]").forEach((btn) => {
+  btn.addEventListener("click", () => setView(btn.dataset.view));
+});
+document.getElementById("vexag").addEventListener("input", (event) => {
+  state.vexag = Number(event.target.value) || 1;
+  document.getElementById("vexagOut").textContent = `${state.vexag}×`;
+});
+document.getElementById("showExisting").addEventListener("change", (event) => {
+  state.showExisting = event.target.checked;
 });
 document.getElementById("drawKindSelect").addEventListener("change", (event) => {
   if (state.drawing) commitDrawing();
@@ -1998,6 +2653,21 @@ document.getElementById("drawPopover").addEventListener("pointerdown", (event) =
 document.getElementById("drawTextInput").addEventListener("input", (event) => {
   const drawing = findDrawing(state.focus.id);
   if (drawing) drawing.text = event.target.value;
+});
+document.getElementById("drawElevStart").addEventListener("input", (event) => {
+  const drawing = findDrawing(state.focus.id);
+  if (drawing && state.focus.kind === "drawing") drawing.z0 = readElev(event.target);
+});
+document.getElementById("drawElevEnd").addEventListener("input", (event) => {
+  const drawing = findDrawing(state.focus.id);
+  if (drawing && state.focus.kind === "drawing") drawing.z1 = readElev(event.target);
+});
+document.getElementById("drawUseGroundBtn").addEventListener("click", () => {
+  const drawing = findDrawing(state.focus.id);
+  if (!drawing || !drawing.points[0]) return;
+  drawing.z0 = Math.round(groundAt(drawing.points[0]) * 10) / 10;
+  drawing.z1 = null;
+  syncSelectionPanel();
 });
 document.getElementById("measureBtn").addEventListener("click", () => {
   setTool("measure");
@@ -2061,10 +2731,11 @@ window.addEventListener("keydown", (event) => {
     if (state.draft.length >= 2) finishMeasure();
     else setMeasuring(false);
     event.preventDefault();
-  } else if (event.key === "Escape" && (state.drawing || state.measuring)) {
+  } else if (event.key === "Escape" && (state.drawing || state.measuring || state.grading)) {
     cancelDraft();
     if (state.drawing) setDrawing(false);
     if (state.measuring) setMeasuring(false);
+    if (state.grading) setTool("grade");
     event.preventDefault();
   } else if (
     (event.key === "Delete" || event.key === "Backspace") &&
@@ -2152,11 +2823,46 @@ function advanceTrucks(dt, result) {
   }
 }
 
+resetGround();
+updateSurface();
+renderTerrainImage(true);
 syncTruckCount();
 syncSelectionPanel();
 updateHint();
 
-function frame() {
+window.siteApi = {
+  SITE,
+  DATUM,
+  state,
+  terrain,
+  specFor,
+  equipmentLabel,
+  routePoints,
+  surfaceAt,
+  groundAt,
+  surfaceRGB,
+  earthColor,
+  focusItem,
+  beginGrade,
+  moveGrade,
+  endGrade,
+  gradeSettings,
+  isGrading: () => state.grading,
+  setHover: (p) => {
+    if (!grade.active) state.hoverPt = p;
+  },
+  vscale: () => state.vexag / state.feetPerPx,
+};
+
+let lastFrame = performance.now();
+
+function frame(now) {
+  const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+  lastFrame = now;
+  applyGrade(dt);
+  updateSurface();
+  if (state.view !== "3d") renderTerrainImage();
+  updateReadout();
   const result = compute();
   renderResults(result);
   if (
