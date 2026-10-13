@@ -2,6 +2,7 @@ const svg = document.getElementById("site");
 const NS = "http://www.w3.org/2000/svg";
 const SITE = { w: 960, h: 620 };
 const layerAreas = document.getElementById("layer-areas");
+const layerUtilities = document.getElementById("layer-utilities");
 const layerLinework = document.getElementById("layer-linework");
 const layerHaul = document.getElementById("layer-haul");
 const layerActors = document.getElementById("layer-actors");
@@ -19,6 +20,8 @@ const MAX_EQUIPMENT = 24;
 const MAX_DUMPS = 8;
 const MAX_HAULS = 8;
 const MAX_MEASURES = 24;
+const MAX_SUPPLIES = 80;
+const MAX_UTILITIES = 24;
 const MAX_DRAWINGS = 80;
 const MIN_AREA = 56;
 
@@ -112,6 +115,84 @@ const EQUIP_CATALOG = {
   },
 };
 
+const MATERIALS = {
+  soil: { label: "Soil", swell: 25, compaction: 10 },
+  clay: { label: "Clay", swell: 35, compaction: 15 },
+  sand: { label: "Sand", swell: 12, compaction: 10 },
+  gravel: { label: "Gravel", swell: 12, compaction: 8 },
+  asphalt: { label: "Asphalt", swell: 40, compaction: 5 },
+  concrete: { label: "Concrete", swell: 60, compaction: 5 },
+};
+
+function materialSpec(area) {
+  return MATERIALS[area.material] || MATERIALS.soil;
+}
+
+function materialLabel(area) {
+  return materialSpec(area).label;
+}
+
+function resetMaterialFactors(area) {
+  const spec = materialSpec(area);
+  area.swellPct = spec.swell;
+  area.compactPct = spec.compaction;
+}
+
+function factorOn(area) {
+  return area.kind === "cut" ? !!area.swellOn : !!area.compactOn;
+}
+
+function factorPct(area) {
+  return area.kind === "cut" ? area.swellPct : area.compactPct;
+}
+
+function adjustedVolume(area) {
+  const vol = terrain.areaVolumes.get(area.id) || 0;
+  return factorOn(area) ? vol * (1 + factorPct(area) / 100) : vol;
+}
+
+function areaVolumeText(area) {
+  const vol = terrain.areaVolumes.get(area.id) || 0;
+  const material = materialLabel(area).toLowerCase();
+  if (!factorOn(area)) {
+    return `${area.kind === "cut" ? "Cut" : "Fill"} ${formatCy(vol)} ${material}`;
+  }
+  return area.kind === "cut"
+    ? `Cut ${formatCy(vol)} bank · ${formatCy(adjustedVolume(area))} loose ${material}`
+    : `Fill ${formatCy(vol)} compacted · ${formatCy(adjustedVolume(area))} ${material} needed`;
+}
+
+const UTILITY_CATALOG = {
+  sanitary: { label: "Sanitary", short: "SS", color: "#43a047", depth: 8, diameter: 8 },
+  gas: { label: "Gas", short: "G", color: "#fdd835", depth: 3, diameter: 2 },
+  water: { label: "Water", short: "W", color: "#1e88e5", depth: 5, diameter: 8 },
+  electric: { label: "Electric", short: "E", color: "#e53935", depth: 3, diameter: 4 },
+};
+
+const SUPPLY_CATALOG = {
+  "traffic-cone": { label: "Traffic cones", short: "TC", color: "#ff6d00", size: 10 },
+  "candlestick-cone": { label: "Candlestick cones", short: "CS", color: "#ff9100", size: 10 },
+  "jersey-barrier": { label: "Jersey barriers", short: "JB", color: "#9e9e9e", size: 14 },
+  "mafia-block": { label: "Mafia blocks", short: "MB", color: "#757575", size: 14 },
+  sign: { label: "Sign", short: "SGN", color: "#f9a825", size: 12, text: true },
+  fence: { label: "Fence", short: "FEN", color: "#8d6e63", size: 14 },
+  rope: { label: "Rope", short: "RP", color: "#a1887f", size: 10 },
+  stakes: { label: "Stakes", short: "STK", color: "#795548", size: 10 },
+  "connex-box": { label: "Connex box", short: "CNX", color: "#2e7d32", size: 20 },
+  "jobsite-trailer": { label: "Jobsite trailer", short: "TRL", color: "#546e7a", size: 22 },
+  "portable-toilet": { label: "Portable toilets", short: "PT", color: "#1e88e5", size: 12 },
+  "water-diversion-barrier": { label: "Water diversion barriers", short: "WDB", color: "#0277bd", size: 14 },
+  sandbags: { label: "Sandbags", short: "SB", color: "#a68a55", size: 12 },
+  "steel-plates": { label: "Steel plates", short: "SP", color: "#455a64", size: 16 },
+  "temp-lighting": { label: "Temp lighting", short: "LT", color: "#f57f17", size: 12 },
+  generator: { label: "Generators", short: "GEN", color: "#e65100", size: 14 },
+  "water-hose": { label: "Water hose", short: "HOS", color: "#00897b", size: 10 },
+  "fuel-tank": { label: "Fuel tank", short: "FT", color: "#c62828", size: 14 },
+  "spill-kit": { label: "Spill kit", short: "SK", color: "#ad1457", size: 10 },
+  ladder: { label: "Ladder", short: "LAD", color: "#616161", size: 10 },
+  "traffic-drum": { label: "Traffic drum", short: "TD", color: "#e64a19", size: 11 },
+};
+
 const state = {
   feetPerPx: 4,
   nextId: 5,
@@ -129,6 +210,7 @@ const state = {
       h: 150,
       designElev: null,
       sideSlope: 2,
+      material: "soil",
     },
   ],
   drawings: [],
@@ -144,6 +226,8 @@ const state = {
   draft: [],
   hover: null,
   measures: [],
+  supplies: [],
+  utilities: [],
   dumps: [{ id: 2, x: 780, y: 220 }],
   haulRoads: [
     {
@@ -254,6 +338,9 @@ function ensureDesign(area) {
     area.designElev = Math.round(area.kind === "cut" ? mean - 12 : mean + 6);
   }
   if (!Number.isFinite(area.sideSlope) || area.sideSlope <= 0) area.sideSlope = 2;
+  if (!Number.isFinite(area.swellPct) || !Number.isFinite(area.compactPct)) {
+    resetMaterialFactors(area);
+  }
 }
 
 function rectGap(x, y, area) {
@@ -719,11 +806,73 @@ function labelForSelection() {
     const measure = findMeasure(id);
     return measure ? `Measure ${measureIndex(measure)}` : "Measure";
   }
+  if (kind === "supply") return supplyLabel(findSupply(id));
+  if (kind === "utility") return utilityLabel(findUtility(id));
   return "None";
 }
 
 function findMeasure(id) {
   return state.measures.find((m) => m.id === id) || null;
+}
+
+function findSupply(id) {
+  return state.supplies.find((s) => s.id === id) || null;
+}
+
+function supplySpec(supply) {
+  return SUPPLY_CATALOG[supply.type] || SUPPLY_CATALOG["traffic-cone"];
+}
+
+function supplyLabel(supply) {
+  if (!supply) return "Supply";
+  const spec = supplySpec(supply);
+  if (spec.text && supply.text) return `Sign: ${supply.text}`;
+  const n =
+    state.supplies.filter((s) => s.type === supply.type).findIndex((s) => s.id === supply.id) + 1;
+  return n > 1 ? `${spec.label} ${n}` : spec.label;
+}
+
+function findUtility(id) {
+  return state.utilities.find((u) => u.id === id) || null;
+}
+
+function utilitySpec(utility) {
+  return UTILITY_CATALOG[utility.type] || UTILITY_CATALOG.water;
+}
+
+function utilityLabel(utility) {
+  if (!utility) return "Utility";
+  const spec = utilitySpec(utility);
+  const n =
+    state.utilities.filter((u) => u.type === utility.type).findIndex((u) => u.id === utility.id) + 1;
+  return `${spec.label} line${n > 1 ? ` ${n}` : ""}`;
+}
+
+function utilityTopAt(utility, p) {
+  return utility.mode === "elev" ? utility.elev : surfaceAt(p) - utility.depth;
+}
+
+function utilityTag(utility) {
+  const spec = utilitySpec(utility);
+  const where =
+    utility.mode === "elev" ? `top ${utility.elev.toFixed(1)} ft` : `${utility.depth} ft deep`;
+  return `${spec.short} ${utility.diameter}" · ${where}`;
+}
+
+function utilityFacts(utility) {
+  const pts = utility.points;
+  const tops = pts.map((p) => utilityTopAt(utility, p));
+  const covers = pts.map((p, i) => surfaceAt(p) - tops[i]);
+  const bits = [`${formatFt(polylineLength(pts))} run`, `${utility.diameter}" dia`];
+  if (utility.mode === "elev") {
+    bits.push(`Top ${utility.elev.toFixed(1)} ft`);
+    bits.push(`Cover ${Math.min(...covers).toFixed(1)}–${Math.max(...covers).toFixed(1)} ft`);
+  } else {
+    bits.push(`${utility.depth} ft below surface`);
+    bits.push(`Top ${Math.min(...tops).toFixed(1)}–${Math.max(...tops).toFixed(1)} ft`);
+  }
+  if (Math.min(...covers) < 0) bits.push("Exposed above grade");
+  return bits.join(" · ");
 }
 
 function measureIndex(measure) {
@@ -985,6 +1134,8 @@ function syncSelectionPanel() {
 
   nameEl.textContent = labelForSelection();
   addBtn.disabled = state.equipment.length >= MAX_EQUIPMENT;
+  document.getElementById("addSupplyBtn").disabled = state.supplies.length >= MAX_SUPPLIES;
+  document.getElementById("addUtilityBtn").disabled = state.utilities.length >= MAX_UTILITIES;
   document.getElementById("addDumpBtn").disabled = state.dumps.length >= MAX_DUMPS;
   document.getElementById("addHaulBtn").disabled = state.haulRoads.length >= MAX_HAULS;
   document.getElementById("straightenBtn").disabled = !selectedHaul();
@@ -1045,7 +1196,7 @@ function syncSelectionPanel() {
     metaEl.textContent = [
       area ? `${pxToFt(area.w).toFixed(0)} × ${pxToFt(area.h).toFixed(0)} ft` : "",
       shaped ? `Pad ${area.designElev} ft at ${area.sideSlope}:1` : "",
-      shaped ? `${area.kind === "cut" ? "Cut" : "Fill"} ${formatCy(terrain.areaVolumes.get(area.id) || 0)}` : "",
+      shaped ? areaVolumeText(area) : "",
       names ? `Equipment: ${names}` : "No equipment assigned.",
     ]
       .filter(Boolean)
@@ -1063,6 +1214,21 @@ function syncSelectionPanel() {
     const b = measure?.points[1];
     metaEl.textContent = a && b ? dimCopy(a, b).text : "";
     removeBtn.disabled = !measure;
+  } else if (kind === "supply") {
+    const supply = findSupply(id);
+    const spec = supply ? supplySpec(supply) : null;
+    metaEl.textContent = spec
+      ? spec.text
+        ? "Field supply · type the sign text in the popover."
+        : `Field supply · ${spec.label}`
+      : "";
+    removeBtn.disabled = !supply;
+    syncSupplyPopover();
+  } else if (kind === "utility") {
+    const utility = findUtility(id);
+    metaEl.textContent = utility ? utilityFacts(utility) : "";
+    removeBtn.disabled = !utility;
+    syncUtilityPopover();
   } else if (kind === "dump") {
     metaEl.textContent = "Dump site";
     removeBtn.disabled = !findDump(id);
@@ -1095,10 +1261,79 @@ function syncSelectionPanel() {
   }
   if (kind !== "area") hideAreaPopover();
   if (kind !== "drawing") hideDrawPopover();
+  if (kind !== "supply") hideSupplyPopover();
+  if (kind !== "utility") hideUtilityPopover();
+}
+
+function hideUtilityPopover() {
+  document.getElementById("utilityPopover").hidden = true;
+}
+
+function syncUtilityPopover() {
+  const pop = document.getElementById("utilityPopover");
+  const utility = state.focus.kind === "utility" ? findUtility(state.focus.id) : null;
+  if (!utility || state.view === "3d") {
+    pop.hidden = true;
+    return;
+  }
+  pop.hidden = false;
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (document.activeElement !== el) el.value = String(value);
+  };
+  setValue("utilityKindSelect", utility.type);
+  setValue("utilityModeSelect", utility.mode);
+  setValue("utilityDepth", utility.depth);
+  setValue("utilityElev", utility.elev);
+  setValue("utilityDiameter", utility.diameter);
+  document.getElementById("utilityDepthLabel").hidden = utility.mode !== "depth";
+  document.getElementById("utilityElevLabel").hidden = utility.mode !== "elev";
+  document.getElementById("utilityNote").textContent = utilityFacts(utility);
+  positionUtilityPopover(utility);
+}
+
+function positionUtilityPopover(utility) {
+  const pop = document.getElementById("utilityPopover");
+  const wrap = document.querySelector(".site-wrap");
+  const svgRect = svg.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const pt = utility.points[0];
+  const x = (pt.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
+  const y = (pt.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
+  pop.style.left = `${Math.max(0, Math.min(x + 16, wrapRect.width - 230))}px`;
+  pop.style.top = `${Math.max(0, Math.min(y + 20, wrapRect.height - pop.offsetHeight - 8))}px`;
 }
 
 function hideAreaPopover() {
   document.getElementById("areaPopover").hidden = true;
+}
+
+function hideSupplyPopover() {
+  document.getElementById("supplyPopover").hidden = true;
+}
+
+function syncSupplyPopover() {
+  const pop = document.getElementById("supplyPopover");
+  const supply = state.focus.kind === "supply" ? findSupply(state.focus.id) : null;
+  if (!supply || !supplySpec(supply).text || state.view === "3d") {
+    pop.hidden = true;
+    return;
+  }
+  pop.hidden = false;
+  const input = document.getElementById("supplyTextInput");
+  if (document.activeElement !== input) input.value = supply.text || "";
+  positionSupplyPopover(supply);
+}
+
+function positionSupplyPopover(supply) {
+  const pop = document.getElementById("supplyPopover");
+  const wrap = document.querySelector(".site-wrap");
+  const svgRect = svg.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const x = (supply.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
+  const y = (supply.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
+  pop.style.left = `${Math.min(x + 20, wrapRect.width - 190)}px`;
+  pop.style.top = `${Math.max(0, Math.min(y + 24, wrapRect.height - pop.offsetHeight - 8))}px`;
 }
 
 function hideDrawPopover() {
@@ -1172,13 +1407,19 @@ function syncAreaPopover() {
   const design = document.getElementById("areaDesignFields");
   design.hidden = area.kind === "zone";
   if (area.kind !== "zone") {
+    const materialSelect = document.getElementById("areaMaterialSelect");
+    if (document.activeElement !== materialSelect) materialSelect.value = area.material || "soil";
+    document.getElementById("areaFactorName").textContent =
+      area.kind === "cut" ? "Swell" : "Compaction";
+    document.getElementById("areaFactorOn").checked = factorOn(area);
+    const pctInput = document.getElementById("areaFactorPct");
+    if (document.activeElement !== pctInput) pctInput.value = String(factorPct(area) ?? "");
     const elevInput = document.getElementById("areaDesignElev");
     const slopeInput = document.getElementById("areaSideSlope");
     if (document.activeElement !== elevInput) elevInput.value = String(area.designElev ?? "");
     if (document.activeElement !== slopeInput) slopeInput.value = String(area.sideSlope ?? 2);
-    const vol = terrain.areaVolumes.get(area.id) || 0;
     document.getElementById("areaVolume").textContent =
-      `${area.kind === "cut" ? "Cut" : "Fill"} ${formatCy(vol)} · existing avg ${meanGround(area).toFixed(1)} ft`;
+      `${areaVolumeText(area)} · existing avg ${meanGround(area).toFixed(1)} ft`;
   }
   positionAreaPopover(area);
 }
@@ -1212,6 +1453,46 @@ function addEquipment() {
   state.equipment.push(piece);
   state.selectedId = piece.id;
   state.focus = { kind: "equipment", id: piece.id };
+  syncSelectionPanel();
+}
+
+function addSupply() {
+  if (state.supplies.length >= MAX_SUPPLIES) return;
+  const type = document.getElementById("supplyTypeSelect").value;
+  const spec = SUPPLY_CATALOG[type];
+  if (!spec) return;
+  const n = state.supplies.length;
+  const supply = {
+    id: state.nextId++,
+    type,
+    x: 420 + (n % 12) * 38,
+    y: 470 + (Math.floor(n / 12) % 4) * 34,
+    text: spec.text ? "SIGN" : "",
+  };
+  state.supplies.push(supply);
+  state.focus = { kind: "supply", id: supply.id };
+  syncSelectionPanel();
+}
+
+function addUtility() {
+  if (state.utilities.length >= MAX_UTILITIES) return;
+  const type = document.getElementById("utilityTypeSelect").value;
+  const spec = UTILITY_CATALOG[type];
+  if (!spec) return;
+  const n = state.utilities.length;
+  const y = 120 + (n % 8) * 50;
+  const a = { x: 120, y };
+  const utility = {
+    id: state.nextId++,
+    type,
+    points: [a, { x: 840, y }],
+    mode: "depth",
+    depth: spec.depth,
+    elev: Math.round((surfaceAt(a) - spec.depth) * 10) / 10,
+    diameter: spec.diameter,
+  };
+  state.utilities.push(utility);
+  state.focus = { kind: "utility", id: utility.id };
   syncSelectionPanel();
 }
 
@@ -1258,6 +1539,7 @@ function addWorkArea() {
     y: Math.min(SITE.h - 150, 70 + (n % 3) * 24),
     w: 220,
     h: 130,
+    material: "soil",
   };
   state.workAreas.push(area);
   state.focus = { kind: "area", id: area.id };
@@ -1333,6 +1615,8 @@ function snapCandidates() {
   const pts = [];
   for (const piece of state.equipment) pts.push(piece);
   for (const dump of state.dumps) pts.push(dump);
+  for (const supply of state.supplies) pts.push(supply);
+  for (const utility of state.utilities) pts.push(...utility.points);
   for (const road of state.haulRoads) {
     pts.push(...road.waypoints);
     const dump = dumpForRoad(road);
@@ -1402,6 +1686,12 @@ function removeSelected() {
   } else if (kind === "measure") {
     state.measures = state.measures.filter((m) => m.id !== id);
     state.focus = { kind: "equipment", id: state.selectedId };
+  } else if (kind === "supply") {
+    state.supplies = state.supplies.filter((s) => s.id !== id);
+    state.focus = { kind: "equipment", id: state.selectedId };
+  } else if (kind === "utility") {
+    state.utilities = state.utilities.filter((u) => u.id !== id);
+    state.focus = { kind: "equipment", id: state.selectedId };
   }
   syncSelectionPanel();
 }
@@ -1411,11 +1701,14 @@ function compute() {
   const fromSurface =
     document.getElementById("useSurfaceVolume").checked && terrain.cut > 0;
   volInput.readOnly = fromSurface;
+  const looseCut = state.workAreas
+    .filter((a) => a.kind === "cut")
+    .reduce((sum, a) => sum + adjustedVolume(a) - (terrain.areaVolumes.get(a.id) || 0), terrain.cut);
   if (fromSurface && document.activeElement !== volInput) {
-    const shown = String(Math.round(terrain.cut));
+    const shown = String(Math.round(looseCut));
     if (volInput.value !== shown) volInput.value = shown;
   }
-  const volume = fromSurface ? terrain.cut : readNumber("volume");
+  const volume = fromSurface ? looseCut : readNumber("volume");
   const loaderRate = combinedLoadRate();
   const perMachine = averageLoadRate();
   const truckCap = readNumber("truckCap");
@@ -1992,6 +2285,10 @@ function drawSite() {
   }
   pruneLayer(layerAreas, liveAreas);
 
+  const liveUtilities = new Set();
+  for (const utility of state.utilities) drawUtility(utility, liveUtilities);
+  pruneLayer(layerUtilities, liveUtilities);
+
   const liveLines = new Set();
   for (const drawing of state.drawings) {
     const selected = state.focus.kind === "drawing" && state.focus.id === drawing.id;
@@ -2042,6 +2339,10 @@ function drawSite() {
   for (const dump of state.dumps) {
     liveActors.add(`dump-${dump.id}`);
     drawDump(dump);
+  }
+  for (const supply of state.supplies) {
+    liveActors.add(`sup-${supply.id}`);
+    drawSupply(supply);
   }
   state.trucks.forEach((truck, i) => {
     liveActors.add(`truck-${i}`);
@@ -2137,6 +2438,58 @@ function drawSite() {
       positionDrawPopover(drawing);
     }
   }
+  if (state.focus.kind === "supply") {
+    const supply = findSupply(state.focus.id);
+    if (supply && !document.getElementById("supplyPopover").hidden) {
+      positionSupplyPopover(supply);
+    }
+  }
+}
+
+function drawUtility(utility, live) {
+  const spec = utilitySpec(utility);
+  const selected = state.focus.kind === "utility" && state.focus.id === utility.id;
+  const key = `ut-${utility.id}`;
+  live.add(key);
+  const g = keyed(layerUtilities, key, () => {
+    const group = svgEl("g", {}, layerUtilities);
+    svgEl("path", { class: "utility-casing" }, group);
+    svgEl("path", { class: "utility-line" }, group);
+    svgEl("text", { class: "utility-label" }, group);
+    return group;
+  });
+  g.setAttribute("class", `utility${selected ? " selected" : ""}`);
+  const d = pathFromPoints(utility.points);
+  g.querySelector(".utility-casing").setAttribute("d", d);
+  const line = g.querySelector(".utility-line");
+  line.setAttribute("d", d);
+  line.setAttribute("stroke", spec.color);
+  const a = utility.points[0];
+  const b = utility.points[1] || a;
+  let angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+  if (angle > 90) angle -= 180;
+  if (angle < -90) angle += 180;
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const label = g.querySelector(".utility-label");
+  label.setAttribute(
+    "transform",
+    `translate(${mid.x.toFixed(1)} ${mid.y.toFixed(1)}) rotate(${angle.toFixed(1)}) translate(0 -8)`
+  );
+  label.textContent = utilityTag(utility);
+  if (selected) {
+    utility.points.forEach((pt, i) => {
+      const hk = `ut-${utility.id}-v${i}`;
+      live.add(hk);
+      const handle = keyed(layerUtilities, hk, () =>
+        svgEl("circle", { r: HANDLE_R, class: "handle utility" }, layerUtilities)
+      );
+      handle.setAttribute("cx", pt.x);
+      handle.setAttribute("cy", pt.y);
+    });
+  }
+  if (selected && !document.getElementById("utilityPopover").hidden) {
+    positionUtilityPopover(utility);
+  }
 }
 
 function drawWorkArea(area) {
@@ -2184,7 +2537,7 @@ function drawWorkArea(area) {
   text.setAttribute("y", area.y + 24);
   text.textContent =
     area.kind !== "zone" && Number.isFinite(area.designElev)
-      ? `${area.name} · pad ${area.designElev} ft`
+      ? `${area.name} · ${materialLabel(area)} · pad ${area.designElev} ft`
       : area.name;
   const handles = areaHandles(area);
   g.querySelectorAll("[data-corner]").forEach((handle) => {
@@ -2242,6 +2595,30 @@ function drawEquipBlock(p) {
   g.querySelector(".equip-block-name").textContent = equipmentLabel(p);
 }
 
+function drawSupply(s) {
+  const spec = supplySpec(s);
+  const selected = state.focus.kind === "supply" && state.focus.id === s.id;
+  const g = keyed(layerActors, `sup-${s.id}`, () => {
+    const group = svgEl("g", {}, layerActors);
+    svgEl("rect", { class: "equip-block-body", rx: 3 }, group);
+    svgEl("text", { class: "equip-block-code", x: 0, y: 3 }, group);
+    svgEl("text", { class: "equip-block-name" }, group);
+    return group;
+  });
+  g.setAttribute("class", `equip-block supply-block${selected ? " selected" : ""}`);
+  g.setAttribute("transform", `translate(${s.x} ${s.y})`);
+  const body = g.querySelector(".equip-block-body");
+  body.setAttribute("x", -spec.size);
+  body.setAttribute("y", -spec.size);
+  body.setAttribute("width", spec.size * 2);
+  body.setAttribute("height", spec.size * 2);
+  body.setAttribute("fill", spec.color);
+  g.querySelector(".equip-block-code").textContent = spec.short;
+  const name = g.querySelector(".equip-block-name");
+  name.setAttribute("y", spec.size + 12);
+  name.textContent = spec.text ? s.text || "" : selected ? supplyLabel(s) : "";
+}
+
 function drawDump(p) {
   const selected = state.focus.kind === "dump" && state.focus.id === p.id;
   const g = keyed(layerActors, `dump-${p.id}`, () => {
@@ -2279,6 +2656,13 @@ function hitTest(p) {
   for (let i = state.dumps.length - 1; i >= 0; i--) {
     const dump = state.dumps[i];
     if (dist(p, dump) < EQUIP_R + 8) return { kind: "dump", id: dump.id };
+  }
+  for (let i = state.supplies.length - 1; i >= 0; i--) {
+    const supply = state.supplies[i];
+    const reach = supplySpec(supply).size + 4;
+    if (Math.abs(p.x - supply.x) <= reach && Math.abs(p.y - supply.y) <= reach) {
+      return { kind: "supply", id: supply.id };
+    }
   }
 
   for (let i = state.measures.length - 1; i >= 0; i--) {
@@ -2344,6 +2728,21 @@ function hitTest(p) {
       const hit = closestOnSegment(p, route[i - 1], route[i]);
       if (hit.d < 14) {
         return { kind: "segment", id: road.id, index: i - 1, point: hit.point };
+      }
+    }
+  }
+
+  for (let u = state.utilities.length - 1; u >= 0; u--) {
+    const utility = state.utilities[u];
+    for (let i = 0; i < utility.points.length; i++) {
+      if (dist(p, utility.points[i]) < HANDLE_R + 6) {
+        return { kind: "utility-vertex", id: utility.id, index: i };
+      }
+    }
+    for (let i = 1; i < utility.points.length; i++) {
+      const hit = closestOnSegment(p, utility.points[i - 1], utility.points[i]);
+      if (hit.d < LINE_HIT) {
+        return { kind: "utility", id: utility.id, index: i - 1, point: hit.point };
       }
     }
   }
@@ -2461,6 +2860,28 @@ svg.addEventListener("pointerdown", (event) => {
   } else if (hit.kind === "dump") {
     state.focus = { kind: "dump", id: hit.id };
     state.drag = hit;
+  } else if (hit.kind === "supply") {
+    state.focus = { kind: "supply", id: hit.id };
+    state.drag = hit;
+  } else if (hit.kind === "utility-vertex") {
+    state.focus = { kind: "utility", id: hit.id };
+    state.drag = hit;
+  } else if (hit.kind === "utility") {
+    const utility = findUtility(hit.id);
+    const wasSelected = state.focus.kind === "utility" && state.focus.id === hit.id;
+    state.focus = { kind: "utility", id: hit.id };
+    if (utility && wasSelected) {
+      utility.points.splice(hit.index + 1, 0, hit.point);
+      state.drag = { kind: "utility-vertex", id: utility.id, index: hit.index + 1 };
+    } else if (utility) {
+      state.drag = {
+        kind: "utility-move",
+        id: utility.id,
+        ox: p.x,
+        oy: p.y,
+        origin: utility.points.map((pt) => ({ ...pt })),
+      };
+    }
   } else if (hit.kind === "waypoint") {
     state.focus = { kind: "haul", id: hit.id };
     state.drag = hit;
@@ -2520,6 +2941,22 @@ svg.addEventListener("pointermove", (event) => {
     if (dump) {
       dump.x = p.x;
       dump.y = p.y;
+    }
+  } else if (state.drag.kind === "supply") {
+    const supply = findSupply(state.drag.id);
+    if (supply) {
+      supply.x = p.x;
+      supply.y = p.y;
+    }
+  } else if (state.drag.kind === "utility-vertex") {
+    const utility = findUtility(state.drag.id);
+    if (utility) utility.points[state.drag.index] = { x: p.x, y: p.y };
+  } else if (state.drag.kind === "utility-move") {
+    const utility = findUtility(state.drag.id);
+    if (utility) {
+      const dx = p.x - state.drag.ox;
+      const dy = p.y - state.drag.oy;
+      utility.points = state.drag.origin.map((pt) => clampPoint({ x: pt.x + dx, y: pt.y + dy }));
     }
   } else if (state.drag.kind === "waypoint") {
     const road = findHaul(state.drag.id);
@@ -2586,6 +3023,9 @@ svg.addEventListener("dblclick", (event) => {
   if (hit?.kind === "waypoint") {
     const road = findHaul(hit.id);
     if (road) road.waypoints.splice(hit.index, 1);
+  } else if (hit?.kind === "utility-vertex") {
+    const utility = findUtility(hit.id);
+    if (utility && utility.points.length > 2) utility.points.splice(hit.index, 1);
   } else if (hit?.kind === "drawing-vertex") {
     const drawing = findDrawing(hit.id);
     const spec = drawing ? drawSpec(drawing.kind) : null;
@@ -2597,6 +3037,55 @@ svg.addEventListener("dblclick", (event) => {
 document.getElementById("addEquipBtn").addEventListener("click", addEquipment);
 document.getElementById("addAreaBtn").addEventListener("click", addWorkArea);
 document.getElementById("addDumpBtn").addEventListener("click", addDump);
+document.getElementById("addSupplyBtn").addEventListener("click", addSupply);
+document.getElementById("addUtilityBtn").addEventListener("click", addUtility);
+document.getElementById("utilityPopover").addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+});
+function focusedUtility() {
+  return state.focus.kind === "utility" ? findUtility(state.focus.id) : null;
+}
+document.getElementById("utilityKindSelect").addEventListener("change", (event) => {
+  const utility = focusedUtility();
+  if (utility) utility.type = event.target.value;
+});
+document.getElementById("utilityModeSelect").addEventListener("change", (event) => {
+  const utility = focusedUtility();
+  if (!utility) return;
+  const p = utility.points[0];
+  if (event.target.value === "elev") {
+    utility.elev = Math.round((surfaceAt(p) - utility.depth) * 10) / 10;
+  } else {
+    utility.depth = Math.max(0, Math.round((surfaceAt(p) - utility.elev) * 2) / 2);
+  }
+  utility.mode = event.target.value;
+});
+document.getElementById("utilityDepth").addEventListener("input", (event) => {
+  const utility = focusedUtility();
+  const value = Number(event.target.value);
+  if (utility && event.target.value !== "" && Number.isFinite(value)) {
+    utility.depth = Math.max(0, value);
+  }
+});
+document.getElementById("utilityElev").addEventListener("input", (event) => {
+  const utility = focusedUtility();
+  const value = readElev(event.target);
+  if (utility && value != null) utility.elev = value;
+});
+document.getElementById("utilityDiameter").addEventListener("input", (event) => {
+  const utility = focusedUtility();
+  const value = Number(event.target.value);
+  if (utility && Number.isFinite(value) && value > 0) utility.diameter = value;
+});
+document.getElementById("supplyPopover").addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+});
+document.getElementById("supplyTextInput").addEventListener("input", (event) => {
+  const supply = state.focus.kind === "supply" ? findSupply(state.focus.id) : null;
+  if (!supply) return;
+  supply.text = event.target.value;
+  document.getElementById("selectedName").textContent = supplyLabel(supply);
+});
 document.getElementById("addHaulBtn").addEventListener("click", addHaulRoad);
 document.getElementById("removeEquipBtn").addEventListener("click", removeSelected);
 document.getElementById("areaPopover").addEventListener("pointerdown", (event) => {
@@ -2611,6 +3100,26 @@ document.getElementById("areaKindSelect").addEventListener("change", (event) => 
   if (!area) return;
   area.kind = event.target.value;
   area.designElev = null;
+});
+document.getElementById("areaMaterialSelect").addEventListener("change", (event) => {
+  const area = findArea(state.focus.id);
+  if (!area) return;
+  area.material = event.target.value;
+  resetMaterialFactors(area);
+});
+document.getElementById("areaFactorOn").addEventListener("change", (event) => {
+  const area = findArea(state.focus.id);
+  if (!area) return;
+  if (area.kind === "cut") area.swellOn = event.target.checked;
+  else area.compactOn = event.target.checked;
+});
+document.getElementById("areaFactorPct").addEventListener("input", (event) => {
+  const area = findArea(state.focus.id);
+  const value = Number(event.target.value);
+  if (!area || event.target.value === "" || !Number.isFinite(value)) return;
+  const pct = Math.max(0, Math.min(100, value));
+  if (area.kind === "cut") area.swellPct = pct;
+  else area.compactPct = pct;
 });
 document.getElementById("areaDesignElev").addEventListener("input", (event) => {
   const area = findArea(state.focus.id);
@@ -2747,7 +3256,9 @@ window.addEventListener("keydown", (event) => {
       state.focus.kind === "drawing" ||
       state.focus.kind === "dump" ||
       state.focus.kind === "haul" ||
-      state.focus.kind === "measure"
+      state.focus.kind === "measure" ||
+      state.focus.kind === "supply" ||
+      state.focus.kind === "utility"
     ) {
       removeSelected();
       event.preventDefault();
@@ -2836,6 +3347,9 @@ window.siteApi = {
   state,
   terrain,
   specFor,
+  supplySpec,
+  utilitySpec,
+  utilityTopAt,
   equipmentLabel,
   routePoints,
   surfaceAt,
@@ -2868,7 +3382,8 @@ function frame(now) {
   if (
     state.focus.kind === "area" ||
     state.focus.kind === "drawing" ||
-    state.focus.kind === "measure"
+    state.focus.kind === "measure" ||
+    state.focus.kind === "utility"
   ) {
     syncSelectionPanel();
   }

@@ -40,6 +40,43 @@
                 </select>
               </label>
               <button type="button" id="addEquipBtn">Add equipment</button>
+              <label>
+                Field supplies
+                <select id="supplyTypeSelect">
+                  <option value="traffic-cone">Traffic cones</option>
+                  <option value="candlestick-cone">Candlestick cones</option>
+                  <option value="jersey-barrier">Jersey barriers</option>
+                  <option value="mafia-block">Mafia blocks</option>
+                  <option value="sign">Sign</option>
+                  <option value="fence">Fence</option>
+                  <option value="rope">Rope</option>
+                  <option value="stakes">Stakes</option>
+                  <option value="connex-box">Connex box</option>
+                  <option value="jobsite-trailer">Jobsite trailer</option>
+                  <option value="portable-toilet">Portable toilets</option>
+                  <option value="water-diversion-barrier">Water diversion barriers</option>
+                  <option value="sandbags">Sandbags</option>
+                  <option value="steel-plates">Steel plates</option>
+                  <option value="temp-lighting">Temp lighting</option>
+                  <option value="generator">Generators</option>
+                  <option value="water-hose">Water hose</option>
+                  <option value="fuel-tank">Fuel tank</option>
+                  <option value="spill-kit">Spill kit</option>
+                  <option value="ladder">Ladder</option>
+                  <option value="traffic-drum">Traffic drum</option>
+                </select>
+              </label>
+              <button type="button" id="addSupplyBtn">Add supply</button>
+              <label>
+                Utility
+                <select id="utilityTypeSelect">
+                  <option value="sanitary">Sanitary</option>
+                  <option value="gas">Gas</option>
+                  <option value="water">Water</option>
+                  <option value="electric">Electric</option>
+                </select>
+              </label>
+              <button type="button" id="addUtilityBtn">Add utility</button>
               <button type="button" id="addAreaBtn">Add work area</button>
               <button type="button" id="addDumpBtn">Add dump</button>
               <button type="button" id="addHaulBtn">Add haul road</button>
@@ -277,6 +314,7 @@
             <g id="layer-surface">
               <path id="tinEdges" class="tin-edges" />
             </g>
+            <g id="layer-utilities"></g>
             <g id="layer-linework"></g>
             <g id="layer-haul"></g>
             <g id="layer-actors"></g>
@@ -314,6 +352,52 @@
               <p class="popover-note" id="drawSurfaceNote"></p>
             </div>
           </div>
+          <div id="supplyPopover" class="area-popover" hidden>
+            <label>
+              Sign text
+              <input id="supplyTextInput" type="text" maxlength="40" />
+            </label>
+          </div>
+          <div id="utilityPopover" class="area-popover" hidden>
+            <label>
+              Type
+              <select id="utilityKindSelect">
+                <option value="sanitary">Sanitary</option>
+                <option value="gas">Gas</option>
+                <option value="water">Water</option>
+                <option value="electric">Electric</option>
+              </select>
+            </label>
+            <label>
+              Position
+              <select id="utilityModeSelect">
+                <option value="depth">Depth below surface</option>
+                <option value="elev">Top of utility elevation</option>
+              </select>
+            </label>
+            <label id="utilityDepthLabel">
+              Depth to top
+              <span class="field">
+                <input id="utilityDepth" type="number" min="0" step="0.5" />
+                <span>ft</span>
+              </span>
+            </label>
+            <label id="utilityElevLabel">
+              Top elevation
+              <span class="field">
+                <input id="utilityElev" type="number" step="0.1" />
+                <span>ft</span>
+              </span>
+            </label>
+            <label>
+              Diameter
+              <span class="field">
+                <input id="utilityDiameter" type="number" min="0.5" step="0.5" />
+                <span>in</span>
+              </span>
+            </label>
+            <p class="popover-note" id="utilityNote"></p>
+          </div>
           <div id="areaPopover" class="area-popover" hidden>
             <label>
               Name
@@ -328,6 +412,27 @@
               </select>
             </label>
             <div id="areaDesignFields" class="popover-design">
+              <label>
+                Material
+                <select id="areaMaterialSelect">
+                  <option value="soil">Soil</option>
+                  <option value="clay">Clay</option>
+                  <option value="sand">Sand</option>
+                  <option value="gravel">Gravel</option>
+                  <option value="asphalt">Asphalt</option>
+                  <option value="concrete">Concrete</option>
+                </select>
+              </label>
+              <div class="popover-factor">
+                <label class="check">
+                  <input id="areaFactorOn" type="checkbox" />
+                  <span id="areaFactorName">Swell</span>
+                </label>
+                <span class="field">
+                  <input id="areaFactorPct" type="number" min="0" max="100" step="1" />
+                  <span>%</span>
+                </span>
+              </div>
               <label>
                 Pad elevation
                 <span class="field">

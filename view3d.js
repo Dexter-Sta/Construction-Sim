@@ -451,7 +451,61 @@ const actorGroup = new THREE.Group();
 scene.add(actorGroup);
 const machines = new Map();
 const dumps = new Map();
+const supplies = new Map();
+const utilities = new Map();
+const UTILITY_PTS = 256;
 const trucks = [];
+
+function syncUtilities() {
+  const seen = new Set();
+  for (const utility of state.utilities) {
+    let line = utilities.get(utility.id);
+    if (!line) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(UTILITY_PTS * 3), 3));
+      line = new THREE.Line(
+        geo,
+        new THREE.LineBasicMaterial({ depthTest: false, transparent: true, opacity: 0.9 })
+      );
+      line.renderOrder = 8;
+      utilities.set(utility.id, line);
+      scene.add(line);
+    }
+    seen.add(utility.id);
+    line.material.color.set(api.utilitySpec(utility).color);
+    const pos = line.geometry.attributes.position.array;
+    let n = 0;
+    const push = (p) => {
+      if (n >= UTILITY_PTS) return;
+      const v = toScene(p, api.utilityTopAt(utility, p));
+      pos[n * 3] = v.x;
+      pos[n * 3 + 1] = v.y;
+      pos[n * 3 + 2] = v.z;
+      n++;
+    };
+    const pts = utility.points;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 10));
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+    }
+    if (pts.length) push(pts[pts.length - 1]);
+    line.geometry.setDrawRange(0, n);
+    line.geometry.attributes.position.needsUpdate = true;
+    line.geometry.computeBoundingSphere();
+  }
+  for (const [id, line] of utilities) {
+    if (!seen.has(id)) {
+      scene.remove(line);
+      line.geometry.dispose();
+      utilities.delete(id);
+    }
+  }
+}
 
 function setRing(group, on) {
   const ring = group.children.find((c) => c.geometry?.type === "RingGeometry");
@@ -507,6 +561,35 @@ function syncActors(now) {
     if (!seenDumps.has(id)) {
       actorGroup.remove(group);
       dumps.delete(id);
+    }
+  }
+
+  const seenSupplies = new Set();
+  for (const supply of state.supplies) {
+    let entry = supplies.get(supply.id);
+    if (entry && entry.sig !== supply.type) {
+      actorGroup.remove(entry.group);
+      entry = null;
+    }
+    if (!entry) {
+      const spec = api.supplySpec(supply);
+      const group = new THREE.Group();
+      const s = spec.size * 2;
+      const mat = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.7 });
+      group.add(box(s, s * 0.6, s, mat, 0, s * 0.3, 0), selectionRing(spec.size + 6));
+      group.userData = { kind: "supply", id: supply.id };
+      entry = { group, sig: supply.type };
+      supplies.set(supply.id, entry);
+      actorGroup.add(group);
+    }
+    seenSupplies.add(supply.id);
+    entry.group.position.copy(toScene(supply, api.surfaceAt(supply)));
+    setRing(entry.group, state.focus.kind === "supply" && state.focus.id === supply.id);
+  }
+  for (const [id, entry] of supplies) {
+    if (!seenSupplies.has(id)) {
+      actorGroup.remove(entry.group);
+      supplies.delete(id);
     }
   }
 
@@ -583,7 +666,12 @@ function pickGround(event) {
 
 function pickActor(event) {
   aim(event);
-  const hit = raycaster.intersectObjects([...machines.values()].map((m) => m.group).concat([...dumps.values()]), true)[0];
+  const hit = raycaster.intersectObjects(
+    [...machines.values()]
+      .map((m) => m.group)
+      .concat([...dumps.values()], [...supplies.values()].map((s) => s.group)),
+    true
+  )[0];
   let node = hit?.object;
   while (node && !node.userData?.kind) node = node.parent;
   return node?.userData || null;
@@ -669,6 +757,7 @@ function tick(now) {
   syncAreas();
   syncRoads();
   syncActors(now);
+  syncUtilities();
   syncBrush();
   controls.update();
   renderer.render(scene, camera);
