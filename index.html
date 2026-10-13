@@ -14,7 +14,7 @@
           <h1>Cut &amp; Haul</h1>
         </div>
         <p class="lede">
-          Place excavators and the dump, drag the haul road, enter production.
+          Place excavators, an offsite dump or stockpile, drag the haul road, enter production.
           The question: will a planner run a real cut through this in under a
           minute?
         </p>
@@ -29,11 +29,11 @@
                 Equipment
                 <select id="equipTypeSelect">
                   <option value="hydraulic-excavator">Hydraulic excavator</option>
-                  <option value="articulated-dump">Articulated dump truck</option>
+                  <option value="on-road-dump">Dump truck (offsite or stockpile)</option>
+                  <option value="articulated-dump">Articulated dump truck (stockpile only)</option>
                   <option value="bulldozer">Bulldozer</option>
                   <option value="wheel-loader">Wheel loader</option>
                   <option value="soil-compactor">Soil compactor / roller</option>
-                  <option value="on-road-dump">On-road dump truck</option>
                   <option value="compact-track-loader">Compact track loader</option>
                   <option value="backhoe-loader">Backhoe loader</option>
                   <option value="trencher">Trencher</option>
@@ -67,6 +67,7 @@
                 </select>
               </label>
               <button type="button" id="addSupplyBtn">Add supply</button>
+              <button type="button" id="newSupplyBtn">New item…</button>
               <label>
                 Utility
                 <select id="utilityTypeSelect">
@@ -78,7 +79,8 @@
               </label>
               <button type="button" id="addUtilityBtn">Add utility</button>
               <button type="button" id="addAreaBtn">Add work area</button>
-              <button type="button" id="addDumpBtn">Add dump</button>
+              <button type="button" id="addOffsiteBtn">Add offsite dump</button>
+              <button type="button" id="addStockpileBtn">Add stockpile</button>
               <button type="button" id="addHaulBtn">Add haul road</button>
               <label>
                 Draw
@@ -277,12 +279,44 @@
                 </g>
               </g>
 
+              <g id="sprite-adt">
+                <ellipse cx="-2" cy="12" rx="32" ry="7" fill="#2a2116" opacity="0.25" />
+                <g class="truck-wheels">
+                  <circle cx="-24" cy="8" r="7" fill="#2c2c2c" stroke="#111" stroke-width="2" />
+                  <circle cx="-24" cy="8" r="3" fill="#9aa0a6" />
+                  <circle cx="-9" cy="8" r="7" fill="#2c2c2c" stroke="#111" stroke-width="2" />
+                  <circle cx="-9" cy="8" r="3" fill="#9aa0a6" />
+                  <circle cx="17" cy="8" r="7" fill="#2c2c2c" stroke="#111" stroke-width="2" />
+                  <circle cx="17" cy="8" r="3" fill="#9aa0a6" />
+                </g>
+                <g class="truck-body">
+                  <rect x="-32" y="-12" width="32" height="18" rx="3" fill="#f6c445" stroke="#a66f00" stroke-width="2" />
+                  <path class="truck-load" d="M-28 -12 q10 -16 22 0" fill="#c4a574" stroke="#8d6e4c" stroke-width="1.6" />
+                  <rect x="0" y="-4" width="6" height="6" rx="1" fill="#333" />
+                  <circle cx="3" cy="-1" r="2" fill="#9aa0a6" />
+                  <rect x="6" y="-12" width="20" height="18" rx="4" fill="#f6c445" stroke="#a66f00" stroke-width="2" />
+                  <rect x="13" y="-9" width="10" height="8" rx="2" fill="#8fd8ff" stroke="#2b4a66" stroke-width="1.4" />
+                  <rect x="26" y="0" width="4" height="5" fill="#333" />
+                </g>
+              </g>
+
               <g id="sprite-dump-pile">
                 <ellipse cx="0" cy="16" rx="34" ry="10" fill="#2a2116" opacity="0.22" />
                 <path d="M-32 16 Q-18 -18 0 8 Q10 -22 34 16 Z" fill="#c9a36a" stroke="#8d6a3e" stroke-width="2.2" />
                 <path d="M-14 16 Q-2 -10 18 16" fill="#b0894d" />
                 <circle cx="-8" cy="4" r="3" fill="#8d6a3e" opacity="0.5" />
                 <circle cx="10" cy="8" r="2.4" fill="#7a5630" opacity="0.45" />
+              </g>
+
+              <g id="sprite-offsite-gate">
+                <ellipse cx="0" cy="16" rx="30" ry="8" fill="#2a2116" opacity="0.22" />
+                <rect x="-26" y="-14" width="5" height="30" fill="#5d4a36" stroke="#2a2116" stroke-width="1.4" />
+                <rect x="21" y="-14" width="5" height="30" fill="#5d4a36" stroke="#2a2116" stroke-width="1.4" />
+                <rect x="-24" y="-12" width="48" height="6" fill="#f6c445" stroke="#8d6a3e" stroke-width="1.4" />
+                <path d="M-6 -6 h-4 v-6 h4 z" fill="#2c2c2c" />
+                <path d="M2 -6 h-4 v-6 h4 z" fill="#2c2c2c" />
+                <path d="M10 -6 h-4 v-6 h4 z" fill="#2c2c2c" />
+                <path d="M-12 6 h16 v-6 l12 9 l-12 9 v-6 h-16 z" fill="#e53935" stroke="#8e1616" stroke-width="1.6" />
               </g>
             </defs>
 
@@ -464,6 +498,26 @@
             </p>
             <p class="selection-meta" id="selectionMeta"></p>
             <div id="equipFields">
+              <div id="loaderFields" class="stack">
+                <label>
+                  Loading
+                  <select id="loadModeSelect">
+                    <option value="live">Live load trucks</option>
+                    <option value="stockpile">Stockpile on site</option>
+                  </select>
+                </label>
+                <label id="stockpileField">
+                  Stockpile to
+                  <select id="equipStockpileSelect"></select>
+                </label>
+                <label>
+                  Production
+                  <select id="prodModeSelect">
+                    <option value="rate">Enter cy/hr</option>
+                    <option value="cycle">Calculate from cycle times</option>
+                  </select>
+                </label>
+              </div>
               <div id="rateFields">
                 <label>
                   Selected production
@@ -479,14 +533,58 @@
                   </span>
                 </label>
               </div>
+              <div id="cycleFields" class="stack" hidden>
+                <div class="split">
+                  <label>
+                    Bucket size
+                    <span class="field">
+                      <input id="bucketCy" type="number" min="0.1" step="0.1" value="2.5" />
+                      <span>cy</span>
+                    </span>
+                  </label>
+                  <label>
+                    Fill bucket
+                    <span class="field">
+                      <input id="fillSec" type="number" min="0" step="0.5" value="8" />
+                      <span>sec</span>
+                    </span>
+                  </label>
+                </div>
+                <div class="split">
+                  <label>
+                    Dump
+                    <span class="field">
+                      <input id="bucketDumpSec" type="number" min="0" step="0.5" value="6" />
+                      <span>sec</span>
+                    </span>
+                  </label>
+                  <label>
+                    Back to dig
+                    <span class="field">
+                      <input id="returnSec" type="number" min="0" step="0.5" value="6" />
+                      <span>sec</span>
+                    </span>
+                  </label>
+                </div>
+                <p class="selection-meta" id="cycleResult"></p>
+              </div>
+              <div id="truckFields" hidden>
+                <label>
+                  Truck capacity
+                  <span class="field">
+                    <input id="truckCapEq" type="number" min="1" step="1" value="14" />
+                    <span>cy</span>
+                  </span>
+                </label>
+              </div>
               <label>
                 Work area
                 <select id="equipAreaSelect">
                   <option value="">None</option>
                 </select>
               </label>
-              <label>
-                Haul route
+              <label id="equipHaulField">
+                Haul road
                 <select id="equipHaulSelect">
                   <option value="">None</option>
                 </select>
@@ -494,7 +592,7 @@
             </div>
             <div id="haulFields" hidden>
               <label>
-                Dump site
+                Destination
                 <select id="haulDumpSelect">
                   <option value="">None</option>
                 </select>
@@ -522,35 +620,6 @@
             <label class="check">
               <input id="useSurfaceVolume" type="checkbox" checked />
               Take cut volume from cut surfaces
-            </label>
-
-            <label>
-              Truck capacity
-              <span class="field">
-                <input
-                  id="truckCap"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value="18"
-                />
-                <span>cy</span>
-              </span>
-            </label>
-
-            <label>
-              Trucks in fleet
-              <span class="field">
-                <input
-                  id="truckCount"
-                  type="number"
-                  min="1"
-                  max="12"
-                  step="1"
-                  value="4"
-                />
-                <span>ea</span>
-              </span>
             </label>
 
             <div class="split">
@@ -620,6 +689,10 @@
                 <dd id="outEarthwork">—</dd>
               </div>
               <div>
+                <dt>Exported offsite / stockpiled</dt>
+                <dd id="outHauled">—</dd>
+              </div>
+              <div>
                 <dt>Haul distance</dt>
                 <dd id="outDistance">—</dd>
               </div>
@@ -649,6 +722,77 @@
         </aside>
       </main>
     </div>
+    <div id="itemEditor" class="item-editor" hidden>
+      <div class="item-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="itemEditorTitle">
+        <header class="item-editor-head">
+          <h2 id="itemEditorTitle">New supply item</h2>
+          <button type="button" id="itemCancelBtn" aria-label="Close">✕</button>
+        </header>
+        <div class="item-editor-body">
+          <div id="itemViewport" class="item-viewport">
+            <p class="item-viewport-hint" id="itemHint"></p>
+          </div>
+          <div class="item-editor-side stack">
+            <label>
+              Name
+              <input id="itemName" type="text" maxlength="40" placeholder="e.g. Pipe rack" />
+            </label>
+            <div class="split">
+              <label>
+                Code
+                <input id="itemCode" type="text" maxlength="4" placeholder="PR" />
+              </label>
+              <label>
+                Color
+                <input id="itemColor" type="color" value="#ffb300" />
+              </label>
+            </div>
+            <h3>Draw plane</h3>
+            <div class="view-toggle" id="itemPlaneSeg">
+              <button type="button" data-plane="plan" aria-pressed="true">Plan</button>
+              <button type="button" data-plane="front" aria-pressed="false">Front</button>
+              <button type="button" data-plane="side" aria-pressed="false">Side</button>
+            </div>
+            <div class="split">
+              <label>
+                <span id="itemOffsetLabel">Height</span>
+                <span class="field">
+                  <input id="itemOffset" type="number" step="0.5" value="0" />
+                  <span>ft</span>
+                </span>
+              </label>
+              <label>
+                Snap
+                <span class="field">
+                  <input id="itemSnap" type="number" min="0" step="0.25" value="0.5" />
+                  <span>ft</span>
+                </span>
+              </label>
+            </div>
+            <div class="split">
+              <button type="button" id="itemFinishBtn">Finish line</button>
+              <button type="button" id="itemUndoBtn">Undo</button>
+            </div>
+            <h3>Extrude last line</h3>
+            <div class="split">
+              <label>
+                Up by
+                <span class="field">
+                  <input id="itemExtrude" type="number" min="0.1" step="0.5" value="3" />
+                  <span>ft</span>
+                </span>
+              </label>
+              <button type="button" id="itemExtrudeBtn">Extrude</button>
+            </div>
+            <p class="selection-meta" id="itemStats"></p>
+            <div class="split item-editor-actions">
+              <button type="button" id="itemClearBtn">Clear</button>
+              <button type="button" id="itemSaveBtn" class="primary">Save item</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="importmap">
       {
         "imports": {
@@ -660,5 +804,6 @@
     <script src="surface.js"></script>
     <script src="app.js"></script>
     <script type="module" src="view3d.js"></script>
+    <script type="module" src="itemEditor.js"></script>
   </body>
 </html>

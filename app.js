@@ -48,6 +48,7 @@ const EQUIP_CATALOG = {
     role: "load",
     color: "#ef6c00",
     rate: 380,
+    bucket: 2.5,
     sprite: true,
   },
   "hydraulic-excavator": {
@@ -56,13 +57,17 @@ const EQUIP_CATALOG = {
     role: "load",
     color: "#ef6c00",
     rate: 380,
+    bucket: 2.5,
   },
   "articulated-dump": {
     label: "Articulated dump truck",
     short: "ADT",
     role: "haul",
-    color: "#c62828",
+    color: "#e0a800",
     rate: 0,
+    cap: 22,
+    destinations: ["stockpile"],
+    truckSprite: "sprite-adt",
   },
   bulldozer: {
     label: "Bulldozer",
@@ -77,6 +82,7 @@ const EQUIP_CATALOG = {
     role: "load",
     color: "#fb8c00",
     rate: 320,
+    bucket: 4,
   },
   "soil-compactor": {
     label: "Soil compactor / roller",
@@ -86,11 +92,14 @@ const EQUIP_CATALOG = {
     rate: 150,
   },
   "on-road-dump": {
-    label: "On-road dump truck",
-    short: "ODT",
+    label: "Dump truck",
+    short: "DT",
     role: "haul",
     color: "#1565c0",
     rate: 0,
+    cap: 14,
+    destinations: ["offsite", "stockpile"],
+    truckSprite: "sprite-truck",
   },
   "compact-track-loader": {
     label: "Compact track loader",
@@ -98,6 +107,7 @@ const EQUIP_CATALOG = {
     role: "load",
     color: "#6d4c41",
     rate: 180,
+    bucket: 0.9,
   },
   "backhoe-loader": {
     label: "Backhoe loader",
@@ -105,6 +115,7 @@ const EQUIP_CATALOG = {
     role: "load",
     color: "#ff8f00",
     rate: 140,
+    bucket: 1,
   },
   trencher: {
     label: "Trencher",
@@ -112,6 +123,7 @@ const EQUIP_CATALOG = {
     role: "load",
     color: "#8d6e63",
     rate: 80,
+    bucket: 0.5,
   },
 };
 
@@ -195,10 +207,16 @@ const SUPPLY_CATALOG = {
 
 const state = {
   feetPerPx: 4,
-  nextId: 5,
+  nextId: 9,
   selectedId: 1,
   focus: { kind: "equipment", id: 1 },
-  equipment: [{ id: 1, type: "excavator", x: 180, y: 310, rate: 380, haulId: 3, areaId: 4 }],
+  equipment: [
+    makePiece(1, "excavator", 180, 310, { areaId: 4 }),
+    makePiece(5, "on-road-dump", 70, 520, { areaId: 4, haulId: 3 }),
+    makePiece(6, "on-road-dump", 142, 520, { areaId: 4, haulId: 3 }),
+    makePiece(7, "on-road-dump", 214, 520, { areaId: 4, haulId: 3 }),
+    makePiece(8, "on-road-dump", 286, 520, { areaId: 4, haulId: 3 }),
+  ],
   workAreas: [
     {
       id: 4,
@@ -228,7 +246,7 @@ const state = {
   measures: [],
   supplies: [],
   utilities: [],
-  dumps: [{ id: 2, x: 780, y: 220 }],
+  dumps: [{ id: 2, kind: "offsite", x: 780, y: 220, hauled: 0 }],
   haulRoads: [
     {
       id: 3,
@@ -241,8 +259,30 @@ const state = {
     },
   ],
   drag: null,
-  trucks: [],
 };
+
+function makePiece(id, type, x, y, extra = {}) {
+  const spec = EQUIP_CATALOG[type];
+  return {
+    id,
+    type,
+    x,
+    y,
+    rate: spec.rate,
+    cap: spec.cap || 0,
+    loadMode: "live",
+    prodMode: "rate",
+    bucket: spec.bucket || 1,
+    fillSec: 8,
+    dumpSec: 6,
+    returnSec: 6,
+    stockpileId: null,
+    haulId: null,
+    areaId: null,
+    live: null,
+    ...extra,
+  };
+}
 
 const GRID = 5;
 const DATUM = 100;
@@ -732,6 +772,58 @@ function excavators() {
   return loaders();
 }
 
+function isTruck(piece) {
+  return specFor(piece).role === "haul";
+}
+
+function bucketCycleSec(piece) {
+  return piece.fillSec + piece.dumpSec + piece.returnSec;
+}
+
+function cycleRate(piece) {
+  const sec = bucketCycleSec(piece);
+  return sec > 0 ? (piece.bucket * 3600) / sec : 0;
+}
+
+function productionRate(piece) {
+  return piece.prodMode === "cycle" ? cycleRate(piece) : piece.rate || 0;
+}
+
+function liveLoaders() {
+  return loaders().filter((e) => e.loadMode !== "stockpile");
+}
+
+function stockpilers() {
+  return loaders().filter((e) => e.loadMode === "stockpile" && findDump(e.stockpileId));
+}
+
+function canHaulTo(piece, road) {
+  const dest = dumpForRoad(road);
+  return !dest || specFor(piece).destinations.includes(dest.kind);
+}
+
+function truckRoad(piece) {
+  const road = piece.haulId ? findHaul(piece.haulId) : null;
+  return road && routePoints(road).length >= 2 && canHaulTo(piece, road) ? road : null;
+}
+
+function destinationsText(piece) {
+  return specFor(piece).destinations.map((k) => DUMP_KINDS[k].label.toLowerCase()).join(" or ");
+}
+
+function trucksOnRoad(road) {
+  return state.equipment.filter((e) => isTruck(e) && e.haulId === road.id);
+}
+
+function loaderForTruck(truck, start) {
+  const live = liveLoaders();
+  const inArea = live.filter((e) => truck.areaId && e.areaId === truck.areaId);
+  const pool = inArea.length ? inArea : live;
+  let best = null;
+  for (const e of pool) if (!best || dist(e, start) < dist(best, start)) best = e;
+  return best;
+}
+
 function typeIndex(piece) {
   return (
     state.equipment.filter((e) => e.type === piece.type).findIndex((e) => e.id === piece.id) + 1
@@ -787,10 +879,7 @@ function labelForSelection() {
     const piece = state.equipment.find((e) => e.id === id);
     return equipmentLabel(piece);
   }
-  if (kind === "dump") {
-    const dump = findDump(id);
-    return dump ? `Dump ${dumpIndex(dump)}` : "Dump";
-  }
+  if (kind === "dump") return dumpLabel(findDump(id));
   if (kind === "haul") {
     const road = findHaul(id);
     return road ? `Haul road ${haulIndex(road)}` : "Haul road";
@@ -821,6 +910,44 @@ function findSupply(id) {
 
 function supplySpec(supply) {
   return SUPPLY_CATALOG[supply.type] || SUPPLY_CATALOG["traffic-cone"];
+}
+
+function supplyReach(supply) {
+  const spec = supplySpec(supply);
+  return spec.lines ? Math.max(8, spec.radiusFt / state.feetPerPx) : spec.size;
+}
+
+function addCustomSupply({ label, short, color, lines }) {
+  const pts = lines.flat();
+  const lo = [0, 1, 2].map((k) => Math.min(...pts.map((p) => p[k])));
+  const hi = [0, 1, 2].map((k) => Math.max(...pts.map((p) => p[k])));
+  const cx = (lo[0] + hi[0]) / 2;
+  const cz = (lo[2] + hi[2]) / 2;
+  const centered = lines.map((line) => line.map(([x, y, z]) => [x - cx, y - lo[1], z - cz]));
+  const n = Object.keys(SUPPLY_CATALOG).filter((k) => k.startsWith("custom-")).length + 1;
+  const key = `custom-${n}`;
+  SUPPLY_CATALOG[key] = {
+    label,
+    short: short || label.slice(0, 3).toUpperCase(),
+    color,
+    size: 12,
+    lines: centered,
+    radiusFt: Math.max(hi[0] - lo[0], hi[2] - lo[2]) / 2,
+  };
+  const select = document.getElementById("supplyTypeSelect");
+  let group = select.querySelector("optgroup[data-custom]");
+  if (!group) {
+    group = document.createElement("optgroup");
+    group.label = "Custom items";
+    group.dataset.custom = "";
+    select.appendChild(group);
+  }
+  const option = document.createElement("option");
+  option.value = key;
+  option.textContent = label;
+  group.appendChild(option);
+  select.value = key;
+  return key;
 }
 
 function supplyLabel(supply) {
@@ -879,12 +1006,6 @@ function measureIndex(measure) {
   return state.measures.findIndex((m) => m.id === measure.id) + 1;
 }
 
-function primaryLoadPoint() {
-  const sel = selectedEquipment();
-  if (sel && isLoader(sel)) return sel;
-  return loaders()[0] || { x: 180, y: 310 };
-}
-
 function findDump(id) {
   return state.dumps.find((d) => d.id === id) || null;
 }
@@ -893,8 +1014,28 @@ function findHaul(id) {
   return state.haulRoads.find((h) => h.id === id) || null;
 }
 
+const DUMP_KINDS = {
+  offsite: { label: "Offsite dump", tag: "OFFSITE" },
+  stockpile: { label: "Stockpile", tag: "STOCKPILE" },
+};
+
 function dumpIndex(dump) {
-  return state.dumps.findIndex((d) => d.id === dump.id) + 1;
+  return state.dumps.filter((d) => d.kind === dump.kind).findIndex((d) => d.id === dump.id) + 1;
+}
+
+function dumpLabel(dump) {
+  if (!dump) return "Dump site";
+  return `${DUMP_KINDS[dump.kind].label} ${dumpIndex(dump)}`;
+}
+
+function hauledTotal(kind) {
+  return state.dumps
+    .filter((d) => !kind || d.kind === kind)
+    .reduce((sum, d) => sum + d.hauled, 0);
+}
+
+function pileScale(dump) {
+  return 0.7 + 0.8 * Math.min(1, Math.cbrt(dump.hauled / 6000));
 }
 
 function haulIndex(road) {
@@ -905,21 +1046,15 @@ function selectedHaul() {
   if (state.focus.kind === "haul") return findHaul(state.focus.id);
   if (state.focus.kind === "equipment") {
     const piece = selectedEquipment();
-    if (piece?.haulId) return findHaul(piece.haulId);
+    if (piece && isTruck(piece) && piece.haulId) return findHaul(piece.haulId);
   }
-  const assigned = state.haulRoads.find((road) =>
-    state.equipment.some((e) => e.haulId === road.id)
-  );
+  const assigned = state.haulRoads.find((road) => trucksOnRoad(road).length);
   return assigned || state.haulRoads[0] || null;
 }
 
 function dumpForRoad(road) {
   if (!road?.dumpId) return null;
   return findDump(road.dumpId);
-}
-
-function equipmentOnHaul(roadId) {
-  return state.equipment.filter((e) => e.haulId === roadId);
 }
 
 function equipmentOnArea(areaId) {
@@ -951,6 +1086,7 @@ function fillSelect(select, options, value) {
     const node = document.createElement("option");
     node.value = opt.value;
     node.textContent = opt.label;
+    node.disabled = !!opt.disabled;
     select.appendChild(node);
   }
   select.value = current;
@@ -1039,17 +1175,25 @@ function formatHours(hours) {
 
 function applySelectedRateFromInput() {
   const sel = selectedEquipment();
-  if (!sel || specFor(sel).role === "haul") return;
-  sel.rate = Math.max(10, readNumber("excavatorRate"));
+  if (!sel) return;
+  if (isTruck(sel)) {
+    sel.cap = Math.max(1, readNumber("truckCapEq"));
+    return;
+  }
+  if (sel.prodMode !== "cycle") sel.rate = Math.max(10, readNumber("excavatorRate"));
+  if (!isLoader(sel)) return;
+  sel.bucket = Math.max(0.1, readNumber("bucketCy"));
+  sel.fillSec = Math.max(0, readNumber("fillSec"));
+  sel.dumpSec = Math.max(0, readNumber("bucketDumpSec"));
+  sel.returnSec = Math.max(0, readNumber("returnSec"));
 }
 
 function combinedLoadRate() {
-  applySelectedRateFromInput();
-  return loaders().reduce((sum, e) => sum + (e.rate || 0), 0);
+  return liveLoaders().reduce((sum, e) => sum + productionRate(e), 0);
 }
 
 function averageLoadRate() {
-  const list = loaders();
+  const list = liveLoaders();
   if (list.length === 0) return 0;
   return combinedLoadRate() / list.length;
 }
@@ -1124,7 +1268,6 @@ function updateHint() {
 function syncSelectionPanel() {
   const nameEl = document.getElementById("selectedName");
   const metaEl = document.getElementById("selectionMeta");
-  const rateEl = document.getElementById("excavatorRate");
   const removeBtn = document.getElementById("removeEquipBtn");
   const addBtn = document.getElementById("addEquipBtn");
   const equipFields = document.getElementById("equipFields");
@@ -1136,7 +1279,8 @@ function syncSelectionPanel() {
   addBtn.disabled = state.equipment.length >= MAX_EQUIPMENT;
   document.getElementById("addSupplyBtn").disabled = state.supplies.length >= MAX_SUPPLIES;
   document.getElementById("addUtilityBtn").disabled = state.utilities.length >= MAX_UTILITIES;
-  document.getElementById("addDumpBtn").disabled = state.dumps.length >= MAX_DUMPS;
+  document.getElementById("addOffsiteBtn").disabled = state.dumps.length >= MAX_DUMPS;
+  document.getElementById("addStockpileBtn").disabled = state.dumps.length >= MAX_DUMPS;
   document.getElementById("addHaulBtn").disabled = state.haulRoads.length >= MAX_HAULS;
   document.getElementById("straightenBtn").disabled = !selectedHaul();
   equipFields.hidden = kind !== "equipment";
@@ -1145,10 +1289,47 @@ function syncSelectionPanel() {
   if (kind === "equipment") {
     const sel = selectedEquipment();
     const spec = sel ? specFor(sel) : null;
-    const showRate = spec && spec.role !== "haul";
-    rateFields.hidden = !showRate;
-    if (sel && showRate && document.activeElement !== rateEl) {
-      rateEl.value = String(sel.rate || spec.rate);
+    const loader = !!sel && isLoader(sel);
+    const truck = !!sel && isTruck(sel);
+    const byCycle = loader && sel.prodMode === "cycle";
+    document.getElementById("loaderFields").hidden = !loader;
+    document.getElementById("stockpileField").hidden = !loader || sel.loadMode !== "stockpile";
+    document.getElementById("cycleFields").hidden = !byCycle;
+    document.getElementById("equipHaulField").hidden = !truck;
+    rateFields.hidden = !sel || truck || byCycle;
+    const setInput = (inputId, value) => {
+      const el = document.getElementById(inputId);
+      if (document.activeElement !== el) el.value = String(value);
+    };
+    if (sel && !truck) setInput("excavatorRate", sel.rate || spec.rate);
+    if (loader) {
+      fillSelect(document.getElementById("loadModeSelect"), [
+        { value: "live", label: "Live load trucks" },
+        { value: "stockpile", label: "Stockpile on site" },
+      ], sel.loadMode);
+      fillSelect(document.getElementById("prodModeSelect"), [
+        { value: "rate", label: "Enter cy/hr" },
+        { value: "cycle", label: "Calculate from cycle times" },
+      ], sel.prodMode);
+      fillSelect(
+        document.getElementById("equipStockpileSelect"),
+        [
+          { value: "", label: "None" },
+          ...state.dumps
+            .filter((d) => d.kind === "stockpile")
+            .map((d) => ({ value: String(d.id), label: dumpLabel(d) })),
+        ],
+        sel.stockpileId ?? ""
+      );
+      setInput("bucketCy", sel.bucket);
+      setInput("fillSec", sel.fillSec);
+      setInput("bucketDumpSec", sel.dumpSec);
+      setInput("returnSec", sel.returnSec);
+      const sec = bucketCycleSec(sel);
+      document.getElementById("cycleResult").textContent =
+        sec > 0
+          ? `${sec.toFixed(1)} sec per bucket · ${(3600 / sec).toFixed(0)} buckets/hr · ${cycleRate(sel).toFixed(0)} cy/hr`
+          : "Enter cycle times to calculate production.";
     }
     fillSelect(
       document.getElementById("equipAreaSelect"),
@@ -1165,27 +1346,54 @@ function syncSelectionPanel() {
       document.getElementById("equipHaulSelect"),
       [
         { value: "", label: "None" },
-        ...state.haulRoads.map((road) => ({
-          value: String(road.id),
-          label: `Haul road ${haulIndex(road)}`,
-        })),
+        ...state.haulRoads.map((road) => {
+          const dest = dumpForRoad(road);
+          const allowed = !truck || canHaulTo(sel, road);
+          return {
+            value: String(road.id),
+            label: `Haul road ${haulIndex(road)}${dest ? ` to ${dumpLabel(dest)}` : ""}${allowed ? "" : " (not allowed)"}`,
+            disabled: !allowed && sel.haulId !== road.id,
+          };
+        }),
       ],
       sel?.haulId ?? ""
     );
+    document.getElementById("truckFields").hidden = !truck;
+    if (truck) setInput("truckCapEq", sel.cap);
     const assignedArea = sel?.areaId ? findArea(sel.areaId) : null;
-    const assignedRoad = sel?.haulId ? findHaul(sel.haulId) : null;
     const bits = [];
     if (assignedArea) bits.push(`Work area: ${assignedArea.name}`);
-    if (assignedRoad) bits.push(`Haul road ${haulIndex(assignedRoad)}`);
+    if (loader) {
+      const rate = `${productionRate(sel).toFixed(0)} cy/hr`;
+      if (sel.loadMode === "stockpile") {
+        const pile = findDump(sel.stockpileId);
+        bits.push(pile ? `Stockpiling to ${dumpLabel(pile)} at ${rate}` : "Pick a stockpile to dig into.");
+      } else {
+        const fed = state.equipment.filter((e) => {
+          const road = isTruck(e) ? truckRoad(e) : null;
+          return road && loaderForTruck(e, routePoints(road)[0])?.id === sel.id;
+        });
+        bits.push(`Live loading at ${rate} · ${fed.length} truck${fed.length === 1 ? "" : "s"}`);
+      }
+    }
+    if (truck) {
+      const road = sel.haulId ? findHaul(sel.haulId) : null;
+      const dest = dumpForRoad(road);
+      bits.push(`${sel.cap} cy · hauls to ${destinationsText(sel)}`);
+      if (road && !canHaulTo(sel, road)) {
+        bits.push(`Parked: ${spec.label}s can't go to ${dumpLabel(dest)}. Pick a haul road to a ${destinationsText(sel)}.`);
+      } else if (road) {
+        bits.push(`Haul road ${haulIndex(road)}${dest ? ` to ${dumpLabel(dest)}` : ""}`);
+      } else {
+        bits.push("Parked. Assign a haul road to put this truck to work.");
+      }
+      if (road && !liveLoaders().length) bits.push("No excavator is live loading.");
+    }
     metaEl.textContent = bits.length
       ? bits.join(" · ")
-      : spec
-        ? spec.role === "haul"
-          ? "Haul unit. Assign a work area and haul route."
-          : spec.role === "support"
-            ? "Support unit. Assign a work area if this machine works that zone."
-            : "No work area assigned."
-        : "";
+      : spec?.role === "support"
+        ? "Support unit. Assign a work area if this machine works that zone."
+        : "No work area assigned.";
     const lastLoader = isLoader(sel) && loaders().length <= 1;
     removeBtn.disabled = !sel || lastLoader;
   } else if (kind === "area") {
@@ -1230,27 +1438,47 @@ function syncSelectionPanel() {
     removeBtn.disabled = !utility;
     syncUtilityPopover();
   } else if (kind === "dump") {
-    metaEl.textContent = "Dump site";
-    removeBtn.disabled = !findDump(id);
+    const dump = findDump(id);
+    const sources = dump
+      ? [
+          ...state.haulRoads.filter((r) => r.dumpId === dump.id).map((r) => `Haul road ${haulIndex(r)}`),
+          ...stockpilers().filter((e) => e.stockpileId === dump.id).map(equipmentLabel),
+        ]
+      : [];
+    metaEl.textContent = dump
+      ? [
+          dump.kind === "offsite"
+            ? `Material leaves the site · ${formatCy(dump.hauled)} exported`
+            : `Material stays on site · ${formatCy(dump.hauled)} stockpiled`,
+          sources.length ? `Fed by ${sources.join(", ")}` : "Nothing feeds this site yet.",
+        ].join(" · ")
+      : "";
+    removeBtn.disabled = !dump;
   } else if (kind === "haul") {
     const road = findHaul(id);
     const pts = routePoints(road);
-    const assigned = road ? equipmentOnHaul(road.id) : [];
+    const assigned = road ? trucksOnRoad(road) : [];
+    const blocked = assigned.filter((e) => !canHaulTo(e, road));
     fillSelect(
       document.getElementById("haulDumpSelect"),
       [
         { value: "", label: "None" },
         ...state.dumps.map((dump) => ({
           value: String(dump.id),
-          label: `Dump ${dumpIndex(dump)}`,
+          label: dumpLabel(dump),
         })),
       ],
       road?.dumpId ?? ""
     );
     const names = assigned.map(equipmentLabel).join(", ");
+    const dest = dumpForRoad(road);
     metaEl.textContent = [
       pts.length > 1 ? `${pxToFt(polylineLength(pts)).toFixed(0)} ft` : "",
-      names ? `Equipment: ${names}` : "No equipment assigned.",
+      dest ? `Trucks haul to ${dumpLabel(dest)}` : "No destination. Trucks turn around at the road end.",
+      names ? `Trucks: ${names}` : "No trucks assigned. Select a truck and pick this haul road.",
+      blocked.length
+        ? `Parked: ${blocked.map(equipmentLabel).join(", ")} can't go to ${dumpLabel(dest)}.`
+        : "",
     ]
       .filter(Boolean)
       .join(" · ");
@@ -1441,15 +1669,12 @@ function addEquipment() {
   const spec = EQUIP_CATALOG[type];
   if (!spec) return;
   const n = state.equipment.length;
-  const piece = {
-    id: state.nextId++,
+  const piece = makePiece(
+    state.nextId++,
     type,
-    x: Math.min(SITE.w - 40, 70 + (n % 7) * 72),
-    y: Math.min(SITE.h - 40, 520 - Math.floor(n / 7) * 70),
-    rate: spec.rate,
-    haulId: null,
-    areaId: null,
-  };
+    Math.min(SITE.w - 40, 70 + (n % 7) * 72),
+    Math.min(SITE.h - 40, 520 - Math.floor(n / 7) * 70)
+  );
   state.equipment.push(piece);
   state.selectedId = piece.id;
   state.focus = { kind: "equipment", id: piece.id };
@@ -1496,14 +1721,16 @@ function addUtility() {
   syncSelectionPanel();
 }
 
-function addDump() {
+function addDump(kind) {
   if (state.dumps.length >= MAX_DUMPS) return;
   const n = state.dumps.length;
   const last = state.dumps[n - 1];
   const dump = {
     id: state.nextId++,
+    kind,
     x: Math.min(SITE.w - 40, (last?.x ?? 780) - 90),
     y: Math.min(SITE.h - 40, (last?.y ?? 220) + 80),
+    hauled: 0,
   };
   state.dumps.push(dump);
   state.focus = { kind: "dump", id: dump.id };
@@ -1676,6 +1903,9 @@ function removeSelected() {
     for (const road of state.haulRoads) {
       if (road.dumpId === id) road.dumpId = null;
     }
+    for (const piece of state.equipment) {
+      if (piece.stockpileId === id) piece.stockpileId = null;
+    }
     state.focus = { kind: "equipment", id: state.selectedId };
   } else if (kind === "haul") {
     state.haulRoads = state.haulRoads.filter((h) => h.id !== id);
@@ -1711,40 +1941,72 @@ function compute() {
   const volume = fromSurface ? looseCut : readNumber("volume");
   const loaderRate = combinedLoadRate();
   const perMachine = averageLoadRate();
-  const truckCap = readNumber("truckCap");
-  const truckCount = Math.max(1, Math.round(readNumber("truckCount")));
   const loadedMph = readNumber("loadedMph");
   const emptyMph = readNumber("emptyMph");
   const spotMin = readNumber("spotMin");
-  const activeRoad = selectedHaul();
-  const dumpMin = dumpForRoad(activeRoad) ? readNumber("dumpMin") : 0;
 
-  const haulFt = pxToFt(polylineLength(routePoints(activeRoad)));
-  const haulMi = ftToMiles(haulFt);
-  const loadMin = perMachine > 0 ? (truckCap / perMachine) * 60 : Infinity;
-  const haulMin =
-    activeRoad && loadedMph > 0 ? (haulMi / loadedMph) * 60 : 0;
-  const returnMin =
-    activeRoad && emptyMph > 0 ? (haulMi / emptyMph) * 60 : 0;
-  const cycleMin = loadMin + haulMin + dumpMin + returnMin + spotMin;
-  const cycleHr = cycleMin / 60;
-  const truckProd = cycleHr > 0 ? truckCap / cycleHr : 0;
-  const fleetProd = truckProd * truckCount;
+  const cycleFor = (road, cap) => {
+    const loadMin = perMachine > 0 ? (cap / perMachine) * 60 : Infinity;
+    const dumpMin = dumpForRoad(road) ? readNumber("dumpMin") : 0;
+    const haulFt = pxToFt(polylineLength(road ? routePoints(road) : []));
+    const haulMi = ftToMiles(haulFt);
+    const haulMin = road && loadedMph > 0 ? (haulMi / loadedMph) * 60 : 0;
+    const returnMin = road && emptyMph > 0 ? (haulMi / emptyMph) * 60 : 0;
+    const cycleMin = loadMin + haulMin + dumpMin + returnMin + spotMin;
+    return { haulFt, loadMin, haulMin, dumpMin, returnMin, cycleMin };
+  };
+  const cycles = new Map();
+  let fleetProd = 0;
+  let truckCount = 0;
+  for (const piece of state.equipment) {
+    const road = isTruck(piece) ? truckRoad(piece) : null;
+    if (!road) continue;
+    const cycle = cycleFor(road, piece.cap);
+    cycles.set(piece.id, cycle);
+    const cycleHr = cycle.cycleMin / 60;
+    if (cycleHr > 0 && Number.isFinite(cycleHr)) fleetProd += piece.cap / cycleHr;
+    truckCount++;
+  }
+  const activeRoad = selectedHaul();
+  const sel = selectedEquipment();
+  const activeTruck =
+    (state.focus.kind === "equipment" && sel && isTruck(sel) && sel) ||
+    (activeRoad && trucksOnRoad(activeRoad).find((e) => truckRoad(e))) ||
+    null;
+  const truckCap = activeTruck?.cap || EQUIP_CATALOG["on-road-dump"].cap;
+  const active = cycleFor(activeRoad, truckCap);
+  const stockRate = stockpilers().reduce((sum, e) => sum + productionRate(e), 0);
   const matched = Math.min(loaderRate, fleetProd);
-  const durationHr = matched > 0 ? volume / matched : Infinity;
+  const digRate = matched + stockRate;
+  const durationHr = digRate > 0 ? volume / digRate : Infinity;
+  const truckProd = active.cycleMin > 0 ? truckCap / (active.cycleMin / 60) : 0;
   const trucksToMatch = truckProd > 0 ? loaderRate / truckProd : Infinity;
-  const count = loaders().length;
-  const limitedBy =
-    fleetProd < loaderRate
-      ? `Haul-limited. About ${Math.ceil(trucksToMatch)} trucks would match ${count} loader${count === 1 ? "" : "s"}.`
-      : `Loading-limited. Extra trucks wait on ${count} loader${count === 1 ? "" : "s"}.`;
+  const count = liveLoaders().length;
+  const loaderWord = `${count} live-loading machine${count === 1 ? "" : "s"}`;
+  let limitedBy;
+  if (count === 0) {
+    limitedBy = stockRate > 0 ? "Everything is being stockpiled on site. Trucks are idle." : "No excavator is digging.";
+  } else if (truckCount === 0) {
+    limitedBy = `No trucks on a haul road. Assign trucks to a haul road to move material from ${loaderWord}.`;
+  } else if (fleetProd < loaderRate) {
+    limitedBy = `Haul-limited. About ${Math.ceil(trucksToMatch)} trucks would keep up with ${loaderWord}.`;
+  } else {
+    limitedBy = `Loading-limited. Extra trucks wait on ${loaderWord}.`;
+  }
+  if (count > 0 && stockRate > 0) limitedBy += ` Plus ${stockRate.toFixed(0)} cy/hr stockpiled on site.`;
+  const parked = state.equipment.filter((e) => {
+    const road = isTruck(e) && e.haulId ? findHaul(e.haulId) : null;
+    return road && !canHaulTo(e, road);
+  });
+  if (parked.length) {
+    limitedBy += ` ${parked.length} truck${parked.length === 1 ? " is" : "s are"} parked because ${parked.length === 1 ? "its" : "their"} haul road goes somewhere ${parked.length === 1 ? "it" : "they"} can't dump.`;
+  }
 
   return {
-    haulFt,
-    loadMin,
-    haulMin,
-    returnMin,
-    cycleMin,
+    volume,
+    truckCap,
+    ...active,
+    cycles,
     fleetProd,
     matched,
     durationHr,
@@ -1757,19 +2019,21 @@ function compute() {
 function renderResults(result) {
   document.getElementById("outEarthwork").textContent =
     `${formatCy(terrain.cut)} / ${formatCy(terrain.fill)}`;
+  document.getElementById("outHauled").textContent =
+    `${formatCy(hauledTotal("offsite"))} / ${formatCy(hauledTotal("stockpile"))}`;
   document.getElementById("outDistance").textContent =
     `${result.haulFt.toFixed(0)} ft (${ftToMiles(result.haulFt).toFixed(2)} mi)`;
   document.getElementById("outLoad").textContent = formatMin(result.loadMin);
   document.getElementById("outCycle").textContent = formatMin(result.cycleMin);
   document.getElementById("outFleet").textContent =
-    `${result.fleetProd.toFixed(0)} cy/hr`;
+    `${result.fleetProd.toFixed(0)} cy/hr · ${result.truckCount} truck${result.truckCount === 1 ? "" : "s"}`;
   document.getElementById("outMatch").textContent =
     `${result.matched.toFixed(0)} cy/hr`;
   document.getElementById("outDuration").textContent = formatHours(
     result.durationHr
   );
   document.getElementById("constraint").textContent =
-    `${result.limitedBy} Combined loading ${result.loaderRate.toFixed(0)} cy/hr.`;
+    `${result.limitedBy} Live loading ${result.loaderRate.toFixed(0)} cy/hr.`;
 }
 
 function areaHandles(area) {
@@ -2337,18 +2601,19 @@ function drawSite() {
 
   const liveActors = new Set();
   for (const dump of state.dumps) {
-    liveActors.add(`dump-${dump.id}`);
+    liveActors.add(`dump-${dump.id}-${dump.kind}`);
     drawDump(dump);
   }
   for (const supply of state.supplies) {
     liveActors.add(`sup-${supply.id}`);
     drawSupply(supply);
   }
-  state.trucks.forEach((truck, i) => {
-    liveActors.add(`truck-${i}`);
-    drawTruck(truck, i);
-  });
   for (const piece of state.equipment) {
+    if (piece.live) {
+      liveActors.add(`truck-${piece.id}`);
+      drawTruck(piece);
+      continue;
+    }
     liveActors.add(`eq-${piece.id}`);
     if (specFor(piece).sprite) drawExcavator(piece);
     else drawEquipBlock(piece);
@@ -2601,12 +2866,38 @@ function drawSupply(s) {
   const g = keyed(layerActors, `sup-${s.id}`, () => {
     const group = svgEl("g", {}, layerActors);
     svgEl("rect", { class: "equip-block-body", rx: 3 }, group);
+    if (spec.lines) svgEl("path", { class: "supply-linework" }, group);
     svgEl("text", { class: "equip-block-code", x: 0, y: 3 }, group);
     svgEl("text", { class: "equip-block-name" }, group);
     return group;
   });
-  g.setAttribute("class", `equip-block supply-block${selected ? " selected" : ""}`);
+  g.setAttribute("class", `equip-block supply-block${spec.lines ? " custom" : ""}${selected ? " selected" : ""}`);
   g.setAttribute("transform", `translate(${s.x} ${s.y})`);
+  if (spec.lines) {
+    const fpp = state.feetPerPx;
+    const reach = supplyReach(s);
+    const path = g.querySelector(".supply-linework");
+    if (path.dataset.fpp !== String(fpp)) {
+      path.dataset.fpp = String(fpp);
+      path.setAttribute(
+        "d",
+        spec.lines
+          .map((line) => line.map(([x, , z], i) => `${i ? "L" : "M"}${(x / fpp).toFixed(2)} ${(z / fpp).toFixed(2)}`).join(""))
+          .join("")
+      );
+    }
+    path.setAttribute("stroke", spec.color);
+    const body = g.querySelector(".equip-block-body");
+    body.setAttribute("x", -reach);
+    body.setAttribute("y", -reach);
+    body.setAttribute("width", reach * 2);
+    body.setAttribute("height", reach * 2);
+    g.querySelector(".equip-block-code").textContent = "";
+    const name = g.querySelector(".equip-block-name");
+    name.setAttribute("y", reach + 12);
+    name.textContent = selected ? supplyLabel(s) : spec.short;
+    return;
+  }
   const body = g.querySelector(".equip-block-body");
   body.setAttribute("x", -spec.size);
   body.setAttribute("y", -spec.size);
@@ -2621,27 +2912,37 @@ function drawSupply(s) {
 
 function drawDump(p) {
   const selected = state.focus.kind === "dump" && state.focus.id === p.id;
-  const g = keyed(layerActors, `dump-${p.id}`, () => {
+  const g = keyed(layerActors, `dump-${p.id}-${p.kind}`, () => {
     const group = svgEl("g", { class: "actor-dump", filter: "url(#soft-shadow)" }, layerActors);
     svgEl("circle", { class: "dump-select", r: 38 }, group);
-    stampSprite("sprite-dump-pile", group);
+    const sprite = stampSprite(p.kind === "offsite" ? "sprite-offsite-gate" : "sprite-dump-pile", group);
+    sprite.setAttribute("class", "dump-sprite");
     svgEl("text", { class: "work-area-label", x: 0, y: 32, "text-anchor": "middle", "font-size": "11" }, group);
     return group;
   });
   g.setAttribute("class", `actor-dump${selected ? " selected" : ""}`);
   g.setAttribute("transform", `translate(${p.x} ${p.y})`);
   g.querySelector(".dump-select").setAttribute("display", selected ? "block" : "none");
-  g.querySelector("text").textContent = `DUMP ${dumpIndex(p)}`;
+  if (p.kind === "stockpile") {
+    const s = pileScale(p);
+    g.querySelector(".dump-sprite").setAttribute("transform", `translate(0 16) scale(${s}) translate(0 -16)`);
+  }
+  g.querySelector("text").textContent = `${DUMP_KINDS[p.kind].tag} ${dumpIndex(p)}`;
 }
 
-function drawTruck(t, i) {
-  if (t.x == null) return;
-  const deg = ((t.angle || 0) * 180) / Math.PI;
-  const g = keyed(layerActors, `truck-${i}`, () => {
+function drawTruck(piece) {
+  const t = piece.live;
+  const selected = state.focus.kind === "equipment" && piece.id === state.focus.id;
+  const g = keyed(layerActors, `truck-${piece.id}`, () => {
     const group = svgEl("g", {}, layerActors);
-    stampSprite("sprite-truck", group);
+    svgEl("circle", { class: "truck-select", r: 30 }, group);
+    stampSprite(specFor(piece).truckSprite, group);
     return group;
   });
+  g.setAttribute("display", t.x == null ? "none" : "inline");
+  if (t.x == null) return;
+  const deg = ((t.angle || 0) * 180) / Math.PI;
+  g.querySelector(".truck-select").setAttribute("display", selected ? "block" : "none");
   g.setAttribute("class", `actor-truck ${t.phase || "haul"}`);
   g.setAttribute("transform", `translate(${t.x} ${t.y}) rotate(${deg})`);
 }
@@ -2649,7 +2950,8 @@ function drawTruck(t, i) {
 function hitTest(p) {
   for (let i = state.equipment.length - 1; i >= 0; i--) {
     const piece = state.equipment[i];
-    if (dist(p, piece) < EQUIP_R) {
+    const at = piece.live || piece;
+    if (at.x != null && dist(p, at) < EQUIP_R) {
       return { kind: "equipment", id: piece.id };
     }
   }
@@ -2659,7 +2961,7 @@ function hitTest(p) {
   }
   for (let i = state.supplies.length - 1; i >= 0; i--) {
     const supply = state.supplies[i];
-    const reach = supplySpec(supply).size + 4;
+    const reach = supplyReach(supply) + 4;
     if (Math.abs(p.x - supply.x) <= reach && Math.abs(p.y - supply.y) <= reach) {
       return { kind: "supply", id: supply.id };
     }
@@ -3036,7 +3338,8 @@ svg.addEventListener("dblclick", (event) => {
 
 document.getElementById("addEquipBtn").addEventListener("click", addEquipment);
 document.getElementById("addAreaBtn").addEventListener("click", addWorkArea);
-document.getElementById("addDumpBtn").addEventListener("click", addDump);
+document.getElementById("addOffsiteBtn").addEventListener("click", () => addDump("offsite"));
+document.getElementById("addStockpileBtn").addEventListener("click", () => addDump("stockpile"));
 document.getElementById("addSupplyBtn").addEventListener("click", addSupply);
 document.getElementById("addUtilityBtn").addEventListener("click", addUtility);
 document.getElementById("utilityPopover").addEventListener("pointerdown", (event) => {
@@ -3196,6 +3499,41 @@ document.getElementById("equipHaulSelect").addEventListener("change", (event) =>
   piece.haulId = value ? Number(value) : null;
   syncSelectionPanel();
 });
+document.getElementById("loadModeSelect").addEventListener("change", (event) => {
+  const piece = selectedEquipment();
+  if (!piece || !isLoader(piece)) return;
+  piece.loadMode = event.target.value;
+  if (piece.loadMode === "stockpile" && !findDump(piece.stockpileId)) {
+    const existing = state.dumps.find((d) => d.kind === "stockpile");
+    if (existing) {
+      piece.stockpileId = existing.id;
+    } else if (state.dumps.length < MAX_DUMPS) {
+      const pile = {
+        id: state.nextId++,
+        kind: "stockpile",
+        x: Math.min(SITE.w - 40, piece.x + 90),
+        y: Math.max(40, piece.y - 60),
+        hauled: 0,
+      };
+      state.dumps.push(pile);
+      piece.stockpileId = pile.id;
+    }
+  }
+  syncSelectionPanel();
+});
+document.getElementById("equipStockpileSelect").addEventListener("change", (event) => {
+  const piece = selectedEquipment();
+  if (!piece) return;
+  const value = event.target.value;
+  piece.stockpileId = value ? Number(value) : null;
+  syncSelectionPanel();
+});
+document.getElementById("prodModeSelect").addEventListener("change", (event) => {
+  const piece = selectedEquipment();
+  if (!piece || !isLoader(piece)) return;
+  piece.prodMode = event.target.value;
+  syncSelectionPanel();
+});
 document.getElementById("haulDumpSelect").addEventListener("change", (event) => {
   const road = findHaul(state.focus.id);
   if (!road) return;
@@ -3222,9 +3560,10 @@ document.getElementById("scaleSelect").addEventListener("change", (event) => {
   state.feetPerPx = Number(event.target.value);
 });
 
-document.getElementById("inputs").addEventListener("input", () => {
+document.getElementById("inputs").addEventListener("input", (event) => {
+  if (event.target instanceof HTMLSelectElement) return;
   applySelectedRateFromInput();
-  syncTruckCount();
+  if (state.focus.kind === "equipment") syncSelectionPanel();
 });
 
 window.addEventListener("keydown", (event) => {
@@ -3266,78 +3605,88 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-function syncTruckCount() {
-  const n = Math.max(1, Math.min(12, Math.round(readNumber("truckCount"))));
-  while (state.trucks.length < n) {
-    state.trucks.push({
-      phase: "haul",
-      t: state.trucks.length / n,
-    });
-  }
-  while (state.trucks.length > n) state.trucks.pop();
+function setTruckPose(live, path, t) {
+  const pos = pointOnPolyline(path, t);
+  const look = pointOnPolyline(path, Math.min(1, t + 0.02));
+  live.x = pos.x;
+  live.y = pos.y;
+  live.angle = Math.atan2(look.y - pos.y, look.x - pos.x);
 }
 
-function advanceTrucks(dt, result) {
-  const road = selectedHaul();
-  const assigned = road ? equipmentOnHaul(road.id) : [];
-  const parkAt =
-    assigned.filter(isLoader)[0] || assigned[0] || loaders()[0] || primaryLoadPoint();
-  const out = routePoints(road);
-  const back = [...out].reverse();
-  const cycleSec = result.cycleMin * 60;
-  const haulShare =
-    result.cycleMin > 0
-      ? (result.haulMin + result.loadMin * 0.15) / result.cycleMin
-      : 0.4;
-  const returnShare =
-    result.cycleMin > 0
-      ? (result.returnMin + result.dumpMin) / result.cycleMin
-      : 0.4;
+function advanceTrucks(result) {
+  const waitFactor =
+    result.loaderRate > 0 ? Math.max(1, result.fleetProd / result.loaderRate) : 1;
+  const queued = new Map();
 
-  for (let i = 0; i < state.trucks.length; i++) {
-    const truck = state.trucks[i];
-    const loader =
-      assigned.filter(isLoader)[i % Math.max(1, assigned.filter(isLoader).length)] ||
-      parkAt;
-    if (out.length < 2) {
-      truck.phase = "load";
-      truck.x = loader.x + 58;
-      truck.y = loader.y + 34 + (i % 3) * 16;
-      truck.angle = 0;
-      continue;
-    }
-    if (!Number.isFinite(cycleSec) || cycleSec <= 0) continue;
-    const offset = i / state.trucks.length;
-    const u = (performance.now() / 1000 / cycleSec + offset) % 1;
-    if (u < haulShare) {
-      const t = haulShare === 0 ? 0 : u / haulShare;
-      const pos = pointOnPolyline(out, t);
-      truck.phase = "haul";
-      truck.x = pos.x;
-      truck.y = pos.y;
-      const look = pointOnPolyline(out, Math.min(1, t + 0.02));
-      truck.angle = Math.atan2(look.y - pos.y, look.x - pos.x);
-    } else if (u < haulShare + returnShare) {
-      const t = returnShare === 0 ? 0 : (u - haulShare) / returnShare;
-      const pos = pointOnPolyline(back, t);
-      truck.phase = "return";
-      truck.x = pos.x;
-      truck.y = pos.y;
-      const look = pointOnPolyline(back, Math.min(1, t + 0.02));
-      truck.angle = Math.atan2(look.y - pos.y, look.x - pos.x);
-    } else {
-      truck.phase = "load";
-      truck.x = loader.x + 58;
-      truck.y = loader.y + 34 + (i % 3) * 16;
-      truck.angle = 0;
-    }
+  for (const road of state.haulRoads) {
+    const trucks = trucksOnRoad(road).filter((e) => truckRoad(e));
+    if (!trucks.length) continue;
+    const dest = dumpForRoad(road);
+    const out = routePoints(road);
+    const back = [...out].reverse();
+
+    trucks.forEach((truck, i) => {
+      const cycle = result.cycles.get(truck.id);
+      const cycleMin = cycle.cycleMin * waitFactor;
+      const cycleSec = cycleMin * 60;
+      const haulShare = (cycle.haulMin + cycle.loadMin * 0.15) / cycleMin;
+      const dumpShare = cycle.dumpMin / cycleMin;
+      const returnShare = cycle.returnMin / cycleMin;
+      const loader = loaderForTruck(truck, out[0]);
+      if (!loader || !Number.isFinite(cycleSec) || cycleSec <= 0) {
+        truck.live = null;
+        return;
+      }
+      const live = truck.live || (truck.live = { phase: null, x: truck.x, y: truck.y, angle: 0 });
+      live.loaderId = loader.id;
+      const u = (performance.now() / 1000 / cycleSec + i / trucks.length) % 1;
+      const wasHauling = live.phase === "haul";
+      if (u < haulShare) {
+        live.phase = "haul";
+        setTruckPose(live, out, u / haulShare);
+      } else if (u < haulShare + dumpShare) {
+        live.phase = "dump";
+        if (dest?.kind === "offsite") {
+          live.x = null;
+        } else {
+          const end = out[out.length - 1];
+          live.x = end.x;
+          live.y = end.y;
+        }
+      } else if (u < haulShare + dumpShare + returnShare) {
+        live.phase = "return";
+        setTruckPose(live, back, (u - haulShare - dumpShare) / returnShare);
+      } else {
+        const slot = queued.get(loader.id) || 0;
+        queued.set(loader.id, slot + 1);
+        live.phase = "load";
+        live.x = loader.x + 58;
+        live.y = loader.y + 34 + (slot % 3) * 16;
+        live.angle = 0;
+      }
+      if (dest && wasHauling && live.phase !== "haul") {
+        const remaining = Math.max(0, result.volume - hauledTotal());
+        dest.hauled += Math.min(truck.cap, remaining);
+      }
+    });
+  }
+  for (const piece of state.equipment) {
+    if (isTruck(piece) && !truckRoad(piece)) piece.live = null;
+    if (piece.live && !liveLoaders().some((e) => e.id === piece.live.loaderId)) piece.live = null;
+  }
+}
+
+function advanceStockpiling(dt, result) {
+  for (const piece of stockpilers()) {
+    const pile = findDump(piece.stockpileId);
+    const remaining = Math.max(0, result.volume - hauledTotal());
+    pile.hauled += Math.min((productionRate(piece) * dt) / 3600, remaining);
   }
 }
 
 resetGround();
 updateSurface();
 renderTerrainImage(true);
-syncTruckCount();
 syncSelectionPanel();
 updateHint();
 
@@ -3348,10 +3697,13 @@ window.siteApi = {
   terrain,
   specFor,
   supplySpec,
+  supplyReach,
+  addCustomSupply,
   utilitySpec,
   utilityTopAt,
   equipmentLabel,
   routePoints,
+  pileScale,
   surfaceAt,
   groundAt,
   surfaceRGB,
@@ -3383,11 +3735,13 @@ function frame(now) {
     state.focus.kind === "area" ||
     state.focus.kind === "drawing" ||
     state.focus.kind === "measure" ||
-    state.focus.kind === "utility"
+    state.focus.kind === "utility" ||
+    state.focus.kind === "dump"
   ) {
     syncSelectionPanel();
   }
-  advanceTrucks(0, result);
+  advanceTrucks(result);
+  advanceStockpiling(dt, result);
   drawSite();
   requestAnimationFrame(frame);
 }

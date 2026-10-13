@@ -391,6 +391,20 @@ function box(w, h, d, mat, x, y, z) {
   return mesh;
 }
 
+function linework(lines, color, scale = 1) {
+  const pts = [];
+  for (const line of lines) {
+    for (let i = 1; i < line.length; i++) {
+      pts.push(new THREE.Vector3(...line[i - 1]).multiplyScalar(scale));
+      pts.push(new THREE.Vector3(...line[i]).multiplyScalar(scale));
+    }
+  }
+  return new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color })
+  );
+}
+
 function selectionRing(radius) {
   const ring = new THREE.Mesh(new THREE.RingGeometry(radius, radius + 4, 40), mats.ring);
   ring.rotation.x = -Math.PI / 2;
@@ -420,12 +434,33 @@ function makeTruck(color) {
   return { group, body, load };
 }
 
+function makeADT(color) {
+  const group = new THREE.Group();
+  const body = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+  for (const x of [-22, -8, 16]) {
+    for (const z of [-10, 10]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 5, 14), mats.dark);
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position.set(x, 6, z);
+      group.add(wheel);
+    }
+  }
+  group.add(box(30, 4, 14, mats.dark, -15, 10, 0));
+  group.add(box(32, 12, 22, body, -15, 18, 0));
+  const load = box(26, 6, 18, mats.load, -15, 26, 0);
+  group.add(load);
+  group.add(box(6, 6, 6, mats.steel, 3, 12, 0));
+  group.add(box(16, 8, 18, body, 14, 14, 0));
+  group.add(box(10, 10, 14, mats.glass, 15, 23, 0));
+  return { group, body, load };
+}
+
 function makeMachine(piece) {
   const spec = api.specFor(piece);
   if (spec.role === "haul") {
-    const truck = makeTruck(spec.color);
+    const truck = piece.type === "articulated-dump" ? makeADT(spec.color) : makeTruck(spec.color);
     truck.group.add(selectionRing(28));
-    return { group: truck.group };
+    return { group: truck.group, body: truck.body, load: truck.load, color: spec.color };
   }
   const group = new THREE.Group();
   const color = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.6 });
@@ -454,8 +489,6 @@ const dumps = new Map();
 const supplies = new Map();
 const utilities = new Map();
 const UTILITY_PTS = 256;
-const trucks = [];
-
 function syncUtilities() {
   const seen = new Set();
   for (const utility of state.utilities) {
@@ -528,7 +561,15 @@ function syncActors(now) {
       actorGroup.add(entry.group);
     }
     seen.add(piece.id);
-    entry.group.position.copy(toScene(piece, api.surfaceAt(piece)));
+    const live = piece.live;
+    entry.group.visible = !live || live.x != null;
+    const at = live && live.x != null ? live : piece;
+    entry.group.position.copy(toScene(at, api.surfaceAt(at)));
+    if (entry.body) {
+      entry.group.rotation.y = live ? -(live.angle || 0) : 0;
+      entry.body.color.set(live?.phase === "return" ? 0x1e88e5 : entry.color);
+      entry.load.visible = !live || live.phase === "haul";
+    }
     if (entry.boom) entry.boom.rotation.z = -0.35 + 0.35 * Math.sin(now / 420 + piece.id);
     setRing(entry.group, state.focus.kind === "equipment" && state.focus.id === piece.id);
   }
@@ -541,44 +582,73 @@ function syncActors(now) {
 
   const seenDumps = new Set();
   for (const dump of state.dumps) {
-    let group = dumps.get(dump.id);
-    if (!group) {
-      group = new THREE.Group();
-      const big = new THREE.Mesh(new THREE.ConeGeometry(30, 22, 20), mats.pile);
-      big.position.set(-6, 11, 0);
-      const small = new THREE.Mesh(new THREE.ConeGeometry(18, 15, 16), mats.pile);
-      small.position.set(16, 7.5, 6);
-      group.add(big, small, selectionRing(36));
+    let entry = dumps.get(dump.id);
+    if (entry && entry.sig !== dump.kind) {
+      actorGroup.remove(entry.group);
+      entry = null;
+    }
+    if (!entry) {
+      const group = new THREE.Group();
+      const pile = new THREE.Group();
+      if (dump.kind === "offsite") {
+        pile.add(
+          box(5, 30, 5, mats.dark, -24, 15, 0),
+          box(5, 30, 5, mats.dark, 24, 15, 0),
+          box(54, 6, 4, mats.yellow, 0, 27, 0),
+          box(26, 3, 10, mats.load, 0, 1.5, 0)
+        );
+      } else {
+        const big = new THREE.Mesh(new THREE.ConeGeometry(30, 22, 20), mats.pile);
+        big.position.set(-6, 11, 0);
+        const small = new THREE.Mesh(new THREE.ConeGeometry(18, 15, 16), mats.pile);
+        small.position.set(16, 7.5, 6);
+        pile.add(big, small);
+      }
+      group.add(pile, selectionRing(36));
       group.userData = { kind: "dump", id: dump.id };
-      dumps.set(dump.id, group);
+      entry = { group, pile, sig: dump.kind };
+      dumps.set(dump.id, entry);
       actorGroup.add(group);
     }
     seenDumps.add(dump.id);
-    group.position.copy(toScene(dump, api.surfaceAt(dump)));
-    setRing(group, state.focus.kind === "dump" && state.focus.id === dump.id);
+    entry.group.position.copy(toScene(dump, api.surfaceAt(dump)));
+    if (dump.kind === "stockpile") entry.pile.scale.setScalar(api.pileScale(dump));
+    setRing(entry.group, state.focus.kind === "dump" && state.focus.id === dump.id);
   }
-  for (const [id, group] of dumps) {
+  for (const [id, entry] of dumps) {
     if (!seenDumps.has(id)) {
-      actorGroup.remove(group);
+      actorGroup.remove(entry.group);
       dumps.delete(id);
     }
   }
 
   const seenSupplies = new Set();
   for (const supply of state.supplies) {
+    const spec = api.supplySpec(supply);
+    const sig = spec.lines ? `${supply.type}|${state.feetPerPx}` : supply.type;
     let entry = supplies.get(supply.id);
-    if (entry && entry.sig !== supply.type) {
+    if (entry && entry.sig !== sig) {
       actorGroup.remove(entry.group);
       entry = null;
     }
     if (!entry) {
-      const spec = api.supplySpec(supply);
       const group = new THREE.Group();
-      const s = spec.size * 2;
-      const mat = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.7 });
-      group.add(box(s, s * 0.6, s, mat, 0, s * 0.3, 0), selectionRing(spec.size + 6));
+      if (spec.lines) {
+        group.add(linework(spec.lines, spec.color, 1 / state.feetPerPx));
+        const reach = api.supplyReach(supply);
+        const hit = new THREE.Mesh(
+          new THREE.CylinderGeometry(reach, reach, 6, 16),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        hit.position.y = 3;
+        group.add(hit, selectionRing(reach + 6));
+      } else {
+        const s = spec.size * 2;
+        const mat = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.7 });
+        group.add(box(s, s * 0.6, s, mat, 0, s * 0.3, 0), selectionRing(spec.size + 6));
+      }
       group.userData = { kind: "supply", id: supply.id };
-      entry = { group, sig: supply.type };
+      entry = { group, sig };
       supplies.set(supply.id, entry);
       actorGroup.add(group);
     }
@@ -593,21 +663,6 @@ function syncActors(now) {
     }
   }
 
-  while (trucks.length < state.trucks.length) {
-    const truck = makeTruck(0xe53935);
-    actorGroup.add(truck.group);
-    trucks.push(truck);
-  }
-  while (trucks.length > state.trucks.length) actorGroup.remove(trucks.pop().group);
-  state.trucks.forEach((t, i) => {
-    const truck = trucks[i];
-    truck.group.visible = t.x != null;
-    if (t.x == null) return;
-    truck.group.position.copy(toScene(t, api.surfaceAt(t)));
-    truck.group.rotation.y = -(t.angle || 0);
-    truck.body.color.set(t.phase === "return" ? 0x1e88e5 : 0xe53935);
-    truck.load.visible = t.phase === "haul";
-  });
 }
 
 const BRUSH_SEGS = 64;
@@ -669,7 +724,7 @@ function pickActor(event) {
   const hit = raycaster.intersectObjects(
     [...machines.values()]
       .map((m) => m.group)
-      .concat([...dumps.values()], [...supplies.values()].map((s) => s.group)),
+      .concat([...dumps.values()].map((d) => d.group), [...supplies.values()].map((s) => s.group)),
     true
   )[0];
   let node = hit?.object;
