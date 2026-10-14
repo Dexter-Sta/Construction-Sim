@@ -16,15 +16,15 @@ const canvas = renderer.domElement;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xb9d4e8);
-scene.fog = new THREE.Fog(0xb9d4e8, 1600, 3600);
+scene.fog = new THREE.Fog(0xb9d4e8, 3200, 7200);
 
-const camera = new THREE.PerspectiveCamera(42, 1, 1, 8000);
+const camera = new THREE.PerspectiveCamera(42, 1, 1, 14000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI * 0.48;
 controls.minDistance = 60;
-controls.maxDistance = 2600;
+controls.maxDistance = 5200;
 
 function resetCamera() {
   const vfov = THREE.MathUtils.degToRad(camera.fov);
@@ -719,6 +719,8 @@ function pickGround(event) {
   };
 }
 
+api.pickGround = pickGround;
+
 function pickActor(event) {
   aim(event);
   const hit = raycaster.intersectObjects(
@@ -778,6 +780,7 @@ canvas.addEventListener("pointerup", (event) => {
   ) {
     const hit = pickActor(event);
     if (hit) api.focusItem(hit.kind, hit.id);
+    else api.clearSelection();
   }
   downAt = null;
 });

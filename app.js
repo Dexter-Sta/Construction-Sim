@@ -1,6 +1,8 @@
 const svg = document.getElementById("site");
 const NS = "http://www.w3.org/2000/svg";
-const SITE = { w: 960, h: 620 };
+const SITE = { w: 1920, h: 1240 };
+const START = { x: 480, y: 310 };
+const MIN_VIEW_W = 160;
 const layerAreas = document.getElementById("layer-areas");
 const layerUtilities = document.getElementById("layer-utilities");
 const layerLinework = document.getElementById("layer-linework");
@@ -211,19 +213,19 @@ const state = {
   selectedId: 1,
   focus: { kind: "equipment", id: 1 },
   equipment: [
-    makePiece(1, "excavator", 180, 310, { areaId: 4 }),
-    makePiece(5, "on-road-dump", 70, 520, { areaId: 4, haulId: 3 }),
-    makePiece(6, "on-road-dump", 142, 520, { areaId: 4, haulId: 3 }),
-    makePiece(7, "on-road-dump", 214, 520, { areaId: 4, haulId: 3 }),
-    makePiece(8, "on-road-dump", 286, 520, { areaId: 4, haulId: 3 }),
+    makePiece(1, "excavator", START.x + 180, START.y + 310, { areaId: 4 }),
+    makePiece(5, "on-road-dump", START.x + 70, START.y + 520, { areaId: 4, haulId: 3 }),
+    makePiece(6, "on-road-dump", START.x + 142, START.y + 520, { areaId: 4, haulId: 3 }),
+    makePiece(7, "on-road-dump", START.x + 214, START.y + 520, { areaId: 4, haulId: 3 }),
+    makePiece(8, "on-road-dump", START.x + 286, START.y + 520, { areaId: 4, haulId: 3 }),
   ],
   workAreas: [
     {
       id: 4,
       kind: "cut",
       name: "Cut 1",
-      x: 100,
-      y: 225,
+      x: START.x + 100,
+      y: START.y + 225,
       w: 220,
       h: 150,
       designElev: null,
@@ -232,11 +234,12 @@ const state = {
     },
   ],
   drawings: [],
+  placing: null,
   drawing: false,
   measuring: false,
   grading: false,
   hoverPt: null,
-  view: "split",
+  view: "plan",
   vexag: 6,
   showExisting: true,
   drawKind: "line",
@@ -246,19 +249,21 @@ const state = {
   measures: [],
   supplies: [],
   utilities: [],
-  dumps: [{ id: 2, kind: "offsite", x: 780, y: 220, hauled: 0 }],
+  dumps: [{ id: 2, kind: "offsite", x: START.x + 780, y: START.y + 220, hauled: 0 }],
   haulRoads: [
     {
       id: 3,
       dumpId: 2,
       waypoints: [
-        { x: 340, y: 420 },
-        { x: 560, y: 430 },
-        { x: 700, y: 300 },
+        { x: START.x + 340, y: START.y + 420 },
+        { x: START.x + 560, y: START.y + 430 },
+        { x: START.x + 700, y: START.y + 300 },
       ],
     },
   ],
   drag: null,
+  pan: null,
+  camera: { x: START.x, y: START.y, w: 960, h: 620 },
 };
 
 function makePiece(id, type, x, y, extra = {}) {
@@ -312,12 +317,14 @@ terrain.final = new Float32Array(terrain.cols * terrain.rows);
 
 const grade = { active: false, pos: null, target: 0 };
 
-function initialGround(x, y) {
+function initialGround(sx, sy) {
+  const x = sx - START.x;
+  const y = sy - START.y;
   const hill = 42 * Math.exp(-((x - 210) ** 2 + (y - 300) ** 2) / (2 * 130 ** 2));
   const ridge =
     16 * Math.exp(-((x - 620) ** 2) / (2 * 90 ** 2)) * (0.6 + 0.4 * Math.sin(y / 90));
   const roll = 4 * Math.sin(x / 110 + 1.3) * Math.cos(y / 95);
-  const tilt = -14 * (x / SITE.w) + 5 * (y / SITE.h);
+  const tilt = -14 * (x / 960) + 5 * (y / 620);
   return DATUM + hill + ridge + roll + tilt;
 }
 
@@ -747,6 +754,11 @@ function focusItem(kind, id) {
   syncSelectionPanel();
 }
 
+function clearSelection() {
+  state.focus = { kind: null, id: null };
+  syncSelectionPanel();
+}
+
 function setView(view) {
   state.view = view;
   document.getElementById("views").dataset.view = view;
@@ -917,15 +929,23 @@ function supplyReach(supply) {
   return spec.lines ? Math.max(8, spec.radiusFt / state.feetPerPx) : spec.size;
 }
 
-function addCustomSupply({ label, short, color, lines }) {
+function addCustomSupply(item) {
+  return addCustomItem(item, "custom");
+}
+
+function addCustomStructure(item) {
+  return addCustomItem(item, "structure");
+}
+
+function addCustomItem({ label, short, color, lines }, prefix) {
   const pts = lines.flat();
   const lo = [0, 1, 2].map((k) => Math.min(...pts.map((p) => p[k])));
   const hi = [0, 1, 2].map((k) => Math.max(...pts.map((p) => p[k])));
   const cx = (lo[0] + hi[0]) / 2;
   const cz = (lo[2] + hi[2]) / 2;
   const centered = lines.map((line) => line.map(([x, y, z]) => [x - cx, y - lo[1], z - cz]));
-  const n = Object.keys(SUPPLY_CATALOG).filter((k) => k.startsWith("custom-")).length + 1;
-  const key = `custom-${n}`;
+  const n = Object.keys(SUPPLY_CATALOG).filter((k) => k.startsWith(`${prefix}-`)).length + 1;
+  const key = `${prefix}-${n}`;
   SUPPLY_CATALOG[key] = {
     label,
     short: short || label.slice(0, 3).toUpperCase(),
@@ -934,19 +954,6 @@ function addCustomSupply({ label, short, color, lines }) {
     lines: centered,
     radiusFt: Math.max(hi[0] - lo[0], hi[2] - lo[2]) / 2,
   };
-  const select = document.getElementById("supplyTypeSelect");
-  let group = select.querySelector("optgroup[data-custom]");
-  if (!group) {
-    group = document.createElement("optgroup");
-    group.label = "Custom items";
-    group.dataset.custom = "";
-    select.appendChild(group);
-  }
-  const option = document.createElement("option");
-  option.value = key;
-  option.textContent = label;
-  group.appendChild(option);
-  select.value = key;
   return key;
 }
 
@@ -1220,7 +1227,9 @@ function setTool(next) {
   state.drawing = tool === "draw";
   state.measuring = tool === "measure";
   state.grading = tool === "grade";
-  document.getElementById("drawLineBtn").setAttribute("aria-pressed", state.drawing ? "true" : "false");
+  const drawBtn = document.getElementById("drawLineBtn");
+  drawBtn.setAttribute("aria-pressed", state.drawing ? "true" : "false");
+  drawBtn.textContent = state.drawing ? `Draw: ${drawSpec().label}` : "Draw";
   document.getElementById("measureBtn").setAttribute("aria-pressed", state.measuring ? "true" : "false");
   document.getElementById("gradeBtn").setAttribute("aria-pressed", state.grading ? "true" : "false");
   svg.classList.toggle("drawing", state.drawing);
@@ -1241,6 +1250,12 @@ function setMeasuring(on) {
 
 function updateHint() {
   const hint = document.getElementById("hint");
+  if (state.placing) {
+    hint.textContent = state.placing.dragging
+      ? `Drop ${state.placing.label} on the site plan or 3D view. Esc cancels.`
+      : `Click the site plan or 3D view to place ${state.placing.label}. Esc cancels.`;
+    return;
+  }
   if (state.drawing) {
     hint.textContent = `${drawSpec().hint} Esc cancels.`;
     return;
@@ -1278,13 +1293,20 @@ function syncSelectionPanel() {
   nameEl.textContent = labelForSelection();
   addBtn.disabled = state.equipment.length >= MAX_EQUIPMENT;
   document.getElementById("addSupplyBtn").disabled = state.supplies.length >= MAX_SUPPLIES;
+  document.getElementById("addStructureBtn").disabled = state.supplies.length >= MAX_SUPPLIES;
   document.getElementById("addUtilityBtn").disabled = state.utilities.length >= MAX_UTILITIES;
   document.getElementById("addOffsiteBtn").disabled = state.dumps.length >= MAX_DUMPS;
   document.getElementById("addStockpileBtn").disabled = state.dumps.length >= MAX_DUMPS;
   document.getElementById("addHaulBtn").disabled = state.haulRoads.length >= MAX_HAULS;
   document.getElementById("straightenBtn").disabled = !selectedHaul();
+  document.getElementById("copyBtn").disabled = !focusedItem();
+  document.getElementById("pasteBtn").disabled = !clipboard || !canPaste();
   equipFields.hidden = kind !== "equipment";
   haulFields.hidden = kind !== "haul";
+  document.getElementById("areaFields").hidden = kind !== "area";
+  document.getElementById("drawFields").hidden = kind !== "drawing";
+  document.getElementById("supplyFields").hidden = kind !== "supply";
+  document.getElementById("utilityFields").hidden = kind !== "utility";
 
   if (kind === "equipment") {
     const sel = selectedEquipment();
@@ -1394,8 +1416,7 @@ function syncSelectionPanel() {
       : spec?.role === "support"
         ? "Support unit. Assign a work area if this machine works that zone."
         : "No work area assigned.";
-    const lastLoader = isLoader(sel) && loaders().length <= 1;
-    removeBtn.disabled = !sel || lastLoader;
+    removeBtn.disabled = !sel;
   } else if (kind === "area") {
     const area = findArea(id);
     const assigned = area ? equipmentOnArea(area.id) : [];
@@ -1427,8 +1448,8 @@ function syncSelectionPanel() {
     const spec = supply ? supplySpec(supply) : null;
     metaEl.textContent = spec
       ? spec.text
-        ? "Field supply · type the sign text in the popover."
-        : `Field supply · ${spec.label}`
+        ? "Sign · type the text below."
+        : `${supply.type.startsWith("structure-") ? "Structure" : "Field supply"} · ${spec.label}`
       : "";
     removeBtn.disabled = !supply;
     syncSupplyPopover();
@@ -1487,24 +1508,16 @@ function syncSelectionPanel() {
     metaEl.textContent = "";
     removeBtn.disabled = true;
   }
-  if (kind !== "area") hideAreaPopover();
-  if (kind !== "drawing") hideDrawPopover();
-  if (kind !== "supply") hideSupplyPopover();
-  if (kind !== "utility") hideUtilityPopover();
-}
-
-function hideUtilityPopover() {
-  document.getElementById("utilityPopover").hidden = true;
 }
 
 function syncUtilityPopover() {
-  const pop = document.getElementById("utilityPopover");
+  const fields = document.getElementById("utilityFields");
   const utility = state.focus.kind === "utility" ? findUtility(state.focus.id) : null;
-  if (!utility || state.view === "3d") {
-    pop.hidden = true;
+  if (!utility) {
+    fields.hidden = true;
     return;
   }
-  pop.hidden = false;
+  fields.hidden = false;
   const setValue = (id, value) => {
     const el = document.getElementById(id);
     if (document.activeElement !== el) el.value = String(value);
@@ -1517,55 +1530,18 @@ function syncUtilityPopover() {
   document.getElementById("utilityDepthLabel").hidden = utility.mode !== "depth";
   document.getElementById("utilityElevLabel").hidden = utility.mode !== "elev";
   document.getElementById("utilityNote").textContent = utilityFacts(utility);
-  positionUtilityPopover(utility);
-}
-
-function positionUtilityPopover(utility) {
-  const pop = document.getElementById("utilityPopover");
-  const wrap = document.querySelector(".site-wrap");
-  const svgRect = svg.getBoundingClientRect();
-  const wrapRect = wrap.getBoundingClientRect();
-  const pt = utility.points[0];
-  const x = (pt.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
-  const y = (pt.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
-  pop.style.left = `${Math.max(0, Math.min(x + 16, wrapRect.width - 230))}px`;
-  pop.style.top = `${Math.max(0, Math.min(y + 20, wrapRect.height - pop.offsetHeight - 8))}px`;
-}
-
-function hideAreaPopover() {
-  document.getElementById("areaPopover").hidden = true;
-}
-
-function hideSupplyPopover() {
-  document.getElementById("supplyPopover").hidden = true;
 }
 
 function syncSupplyPopover() {
-  const pop = document.getElementById("supplyPopover");
+  const fields = document.getElementById("supplyFields");
   const supply = state.focus.kind === "supply" ? findSupply(state.focus.id) : null;
-  if (!supply || !supplySpec(supply).text || state.view === "3d") {
-    pop.hidden = true;
+  if (!supply || !supplySpec(supply).text) {
+    fields.hidden = true;
     return;
   }
-  pop.hidden = false;
+  fields.hidden = false;
   const input = document.getElementById("supplyTextInput");
   if (document.activeElement !== input) input.value = supply.text || "";
-  positionSupplyPopover(supply);
-}
-
-function positionSupplyPopover(supply) {
-  const pop = document.getElementById("supplyPopover");
-  const wrap = document.querySelector(".site-wrap");
-  const svgRect = svg.getBoundingClientRect();
-  const wrapRect = wrap.getBoundingClientRect();
-  const x = (supply.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
-  const y = (supply.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
-  pop.style.left = `${Math.min(x + 20, wrapRect.width - 190)}px`;
-  pop.style.top = `${Math.max(0, Math.min(y + 24, wrapRect.height - pop.offsetHeight - 8))}px`;
-}
-
-function hideDrawPopover() {
-  document.getElementById("drawPopover").hidden = true;
 }
 
 function readElev(input) {
@@ -1576,16 +1552,16 @@ function readElev(input) {
 }
 
 function syncDrawPopover() {
-  const pop = document.getElementById("drawPopover");
+  const fields = document.getElementById("drawFields");
   const drawing =
     state.focus.kind === "drawing" ? findDrawing(state.focus.id) : null;
   const showText = drawing && (drawing.kind === "text" || drawing.kind === "leader");
   const showElev = drawing && surfaceKind(drawing.kind);
-  if ((!showText && !showElev) || state.view === "3d") {
-    pop.hidden = true;
+  if (!showText && !showElev) {
+    fields.hidden = true;
     return;
   }
-  pop.hidden = false;
+  fields.hidden = false;
   document.getElementById("drawTextFields").hidden = !showText;
   document.getElementById("drawElevFields").hidden = !showElev;
   if (showText) {
@@ -1605,29 +1581,16 @@ function syncDrawPopover() {
         : "Add elevations until the points are not all in one line."
       : "Set an elevation to include this line in the surface.";
   }
-  positionDrawPopover(drawing);
-}
-
-function positionDrawPopover(drawing) {
-  const pop = document.getElementById("drawPopover");
-  const wrap = document.querySelector(".site-wrap");
-  const svgRect = svg.getBoundingClientRect();
-  const wrapRect = wrap.getBoundingClientRect();
-  const pt = drawing.kind === "leader" ? drawing.points[drawing.points.length - 1] : drawing.points[0];
-  const x = (pt.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
-  const y = (pt.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
-  pop.style.left = `${Math.min(x + 12, wrapRect.width - 220)}px`;
-  pop.style.top = `${Math.max(0, Math.min(y + 20, wrapRect.height - pop.offsetHeight - 8))}px`;
 }
 
 function syncAreaPopover() {
-  const pop = document.getElementById("areaPopover");
+  const fields = document.getElementById("areaFields");
   const area = state.focus.kind === "area" ? findArea(state.focus.id) : null;
-  if (!area || state.view === "3d") {
-    pop.hidden = true;
+  if (!area) {
+    fields.hidden = true;
     return;
   }
-  pop.hidden = false;
+  fields.hidden = false;
   const nameInput = document.getElementById("areaNameInput");
   const kindSelect = document.getElementById("areaKindSelect");
   if (document.activeElement !== nameInput) nameInput.value = area.name;
@@ -1649,31 +1612,18 @@ function syncAreaPopover() {
     document.getElementById("areaVolume").textContent =
       `${areaVolumeText(area)} · existing avg ${meanGround(area).toFixed(1)} ft`;
   }
-  positionAreaPopover(area);
 }
 
-function positionAreaPopover(area) {
-  const pop = document.getElementById("areaPopover");
-  const wrap = document.querySelector(".site-wrap");
-  const svgRect = svg.getBoundingClientRect();
-  const wrapRect = wrap.getBoundingClientRect();
-  const x = (area.x / SITE.w) * svgRect.width + (svgRect.left - wrapRect.left);
-  const y = (area.y / SITE.h) * svgRect.height + (svgRect.top - wrapRect.top);
-  pop.style.left = `${Math.min(x + 12, wrapRect.width - 190)}px`;
-  pop.style.top = `${Math.max(0, Math.min(y + 36, wrapRect.height - pop.offsetHeight - 8))}px`;
-}
-
-function addEquipment() {
+function addEquipment(type, at = null) {
   if (state.equipment.length >= MAX_EQUIPMENT) return;
-  const type = document.getElementById("equipTypeSelect").value;
   const spec = EQUIP_CATALOG[type];
   if (!spec) return;
   const n = state.equipment.length;
   const piece = makePiece(
     state.nextId++,
     type,
-    Math.min(SITE.w - 40, 70 + (n % 7) * 72),
-    Math.min(SITE.h - 40, 520 - Math.floor(n / 7) * 70)
+    at ? at.x : Math.min(SITE.w - 40, 70 + (n % 7) * 72),
+    at ? at.y : Math.min(SITE.h - 40, 520 - Math.floor(n / 7) * 70)
   );
   state.equipment.push(piece);
   state.selectedId = piece.id;
@@ -1681,17 +1631,16 @@ function addEquipment() {
   syncSelectionPanel();
 }
 
-function addSupply() {
+function addSupply(type, at = null) {
   if (state.supplies.length >= MAX_SUPPLIES) return;
-  const type = document.getElementById("supplyTypeSelect").value;
   const spec = SUPPLY_CATALOG[type];
   if (!spec) return;
   const n = state.supplies.length;
   const supply = {
     id: state.nextId++,
     type,
-    x: 420 + (n % 12) * 38,
-    y: 470 + (Math.floor(n / 12) % 4) * 34,
+    x: at ? at.x : 420 + (n % 12) * 38,
+    y: at ? at.y : 470 + (Math.floor(n / 12) % 4) * 34,
     text: spec.text ? "SIGN" : "",
   };
   state.supplies.push(supply);
@@ -1699,18 +1648,18 @@ function addSupply() {
   syncSelectionPanel();
 }
 
-function addUtility() {
+function addUtility(type, at = null) {
   if (state.utilities.length >= MAX_UTILITIES) return;
-  const type = document.getElementById("utilityTypeSelect").value;
   const spec = UTILITY_CATALOG[type];
   if (!spec) return;
   const n = state.utilities.length;
-  const y = 120 + (n % 8) * 50;
-  const a = { x: 120, y };
+  const y = at ? at.y : 120 + (n % 8) * 50;
+  const a = { x: at ? Math.max(8, at.x - 180) : 120, y };
+  const b = { x: at ? Math.min(SITE.w - 8, at.x + 180) : 840, y };
   const utility = {
     id: state.nextId++,
     type,
-    points: [a, { x: 840, y }],
+    points: [a, b],
     mode: "depth",
     depth: spec.depth,
     elev: Math.round((surfaceAt(a) - spec.depth) * 10) / 10,
@@ -1724,14 +1673,9 @@ function addUtility() {
 function addDump(kind) {
   if (state.dumps.length >= MAX_DUMPS) return;
   const n = state.dumps.length;
-  const last = state.dumps[n - 1];
-  const dump = {
-    id: state.nextId++,
-    kind,
-    x: Math.min(SITE.w - 40, (last?.x ?? 780) - 90),
-    y: Math.min(SITE.h - 40, (last?.y ?? 220) + 80),
-    hauled: 0,
-  };
+  const c = viewCenter();
+  const dump = clampPoint({ x: c.x + 160 - (n % 4) * 60, y: c.y - 80 + (n % 3) * 60 });
+  Object.assign(dump, { id: state.nextId++, kind, hauled: 0 });
   state.dumps.push(dump);
   state.focus = { kind: "dump", id: dump.id };
   syncSelectionPanel();
@@ -1740,15 +1684,16 @@ function addDump(kind) {
 function addHaulRoad() {
   if (state.haulRoads.length >= MAX_HAULS) return;
   const n = state.haulRoads.length;
-  const x0 = 260 + (n % 4) * 36;
-  const y0 = 390 + n * 32;
+  const c = viewCenter();
+  const x0 = c.x - 190 + (n % 4) * 36;
+  const y0 = c.y + 40 + (n % 4) * 32;
   const road = {
     id: state.nextId++,
     dumpId: null,
     waypoints: [
-      { x: x0, y: y0 },
-      { x: x0 + 200, y: y0 + 24 },
-      { x: Math.min(SITE.w - 40, x0 + 380), y: y0 - 30 },
+      clampPoint({ x: x0, y: y0 }),
+      clampPoint({ x: x0 + 200, y: y0 + 24 }),
+      clampPoint({ x: x0 + 380, y: y0 - 30 }),
     ],
   };
   state.haulRoads.push(road);
@@ -1762,8 +1707,8 @@ function addWorkArea() {
     id: state.nextId++,
     kind: "zone",
     name: nextWorkAreaName(),
-    x: Math.min(SITE.w - 220, 80 + (n % 4) * 28),
-    y: Math.min(SITE.h - 150, 70 + (n % 3) * 24),
+    x: Math.max(8, Math.min(SITE.w - 228, viewCenter().x - 110 + (n % 4) * 28)),
+    y: Math.max(8, Math.min(SITE.h - 138, viewCenter().y - 65 + (n % 3) * 24)),
     w: 220,
     h: 130,
     material: "soil",
@@ -1879,16 +1824,112 @@ function measurePointer(event) {
   return p;
 }
 
+const ITEM_LIST = {
+  equipment: () => state.equipment,
+  area: () => state.workAreas,
+  drawing: () => state.drawings,
+  measure: () => state.measures,
+  supply: () => state.supplies,
+  utility: () => state.utilities,
+  dump: () => state.dumps,
+  haul: () => state.haulRoads,
+};
+const ITEM_MAX = {
+  equipment: MAX_EQUIPMENT,
+  drawing: MAX_DRAWINGS,
+  measure: MAX_MEASURES,
+  supply: MAX_SUPPLIES,
+  utility: MAX_UTILITIES,
+  dump: MAX_DUMPS,
+  haul: MAX_HAULS,
+};
+const PASTE_STEP = 36;
+let clipboard = null;
+let pasteCount = 0;
+
+function focusedItem() {
+  const list = ITEM_LIST[state.focus.kind];
+  if (!list) return null;
+  return list().find((item) => item.id === state.focus.id) || null;
+}
+
+function canPaste() {
+  if (!clipboard) return false;
+  const max = ITEM_MAX[clipboard.kind];
+  return !max || ITEM_LIST[clipboard.kind]().length < max;
+}
+
+function nudgePoints(points, dx, dy) {
+  if (!points.length) return points;
+  const minX = Math.min(...points.map((p) => p.x));
+  const maxX = Math.max(...points.map((p) => p.x));
+  const minY = Math.min(...points.map((p) => p.y));
+  const maxY = Math.max(...points.map((p) => p.y));
+  const ax = Math.max(8 - minX, Math.min(dx, SITE.w - 8 - maxX));
+  const ay = Math.max(8 - minY, Math.min(dy, SITE.h - 8 - maxY));
+  return points.map((p) => ({ ...p, x: p.x + ax, y: p.y + ay }));
+}
+
+function nudgeBox(x, y, w, h, dx, dy) {
+  return {
+    x: Math.max(8, Math.min(SITE.w - w - 8, x + dx)),
+    y: Math.max(8, Math.min(SITE.h - h - 8, y + dy)),
+  };
+}
+
+function copySelected() {
+  const item = focusedItem();
+  if (!item) return;
+  const data = JSON.parse(JSON.stringify(item));
+  delete data.id;
+  delete data.live;
+  if (state.focus.kind === "dump") data.hauled = 0;
+  clipboard = { kind: state.focus.kind, data };
+  pasteCount = 0;
+  syncSelectionPanel();
+}
+
+function pasteSelected() {
+  if (!clipboard) return;
+  if (!canPaste()) {
+    document.getElementById("hint").textContent =
+      "Can't paste. The site already has as many of these as it allows.";
+    return;
+  }
+  pasteCount += 1;
+  const step = PASTE_STEP * pasteCount;
+  const copy = JSON.parse(JSON.stringify(clipboard.data));
+  copy.id = state.nextId++;
+  if (copy.points) copy.points = nudgePoints(copy.points, step, step);
+  if (copy.waypoints) copy.waypoints = nudgePoints(copy.waypoints, step, step);
+  if (Number.isFinite(copy.w) && Number.isFinite(copy.h)) {
+    const p = nudgeBox(copy.x, copy.y, copy.w, copy.h, step, step);
+    copy.x = p.x;
+    copy.y = p.y;
+  } else if (Number.isFinite(copy.x) && Number.isFinite(copy.y)) {
+    const p = nudgeBox(copy.x, copy.y, 0, 0, step, step);
+    copy.x = Math.max(8, Math.min(SITE.w - 8, p.x));
+    copy.y = Math.max(8, Math.min(SITE.h - 8, p.y));
+  }
+  if (clipboard.kind === "equipment") copy.live = null;
+  ITEM_LIST[clipboard.kind]().push(copy);
+  if (clipboard.kind === "equipment") state.selectedId = copy.id;
+  state.focus = { kind: clipboard.kind, id: copy.id };
+  syncSelectionPanel();
+}
+
 function removeSelected() {
   const { kind, id } = state.focus;
   if (kind === "equipment") {
-    const piece = state.equipment.find((e) => e.id === id);
-    if (piece && isLoader(piece) && loaders().length <= 1) return;
     state.equipment = state.equipment.filter((e) => e.id !== id);
-    const next = loaders()[0] || state.equipment[0];
-    if (!next) return;
-    state.selectedId = next.id;
-    state.focus = { kind: "equipment", id: next.id };
+    const next = state.equipment[0];
+    if (next) {
+      state.selectedId = next.id;
+      state.focus = { kind: "equipment", id: next.id };
+    } else {
+      state.selectedId = null;
+      state.focus = { kind: null, id: null };
+    }
   } else if (kind === "area") {
     state.workAreas = state.workAreas.filter((a) => a.id !== id);
     for (const piece of state.equipment) {
@@ -2667,19 +2708,27 @@ function drawSite() {
   }
   pruneLayer(layerMeasures, liveDims);
 
-  const barFt = 100;
-  const barPx = barFt / state.feetPerPx;
+  const u = unitsPerScreenPx();
+  const ftPerScreenPx = state.feetPerPx * u;
+  const barFt = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000].find((ft) => ft / ftPerScreenPx >= 70) || 5000;
+  const barPx = barFt / ftPerScreenPx;
+  const chipW = 78 + barPx;
   const scale = keyed(layerUi, "scale", () => {
     const g = svgEl("g", {}, layerUi);
     svgEl("rect", { class: "scale-chip", x: 0, y: 0, height: 28, rx: 6 }, g);
-    svgEl("text", { class: "scale-chip-text", x: 10, y: 18 }, g).textContent = `${barFt} ft`;
+    svgEl("text", { class: "scale-chip-text", x: 10, y: 18 }, g);
     svgEl("line", { y1: 18, y2: 18, stroke: "#fff8e7", "stroke-width": 2 }, g);
     return g;
   });
-  scale.setAttribute("transform", `translate(12 ${SITE.h - 40})`);
-  scale.querySelector("rect").setAttribute("width", String(70 + barPx));
-  scale.querySelector("line").setAttribute("x1", "58");
-  scale.querySelector("line").setAttribute("x2", String(58 + barPx));
+  const cam = state.camera;
+  scale.setAttribute(
+    "transform",
+    `translate(${cam.x + cam.w - (chipW + 12) * u} ${cam.y + cam.h - 40 * u}) scale(${u})`
+  );
+  scale.querySelector("text").textContent = `${barFt.toLocaleString()} ft`;
+  scale.querySelector("rect").setAttribute("width", String(chipW));
+  scale.querySelector("line").setAttribute("x1", "66");
+  scale.querySelector("line").setAttribute("x2", String(66 + barPx));
 
   const brush = keyed(layerUi, "brush", () => svgEl("circle", { class: "grade-brush" }, layerUi));
   if (state.grading && state.hoverPt) {
@@ -2691,24 +2740,6 @@ function drawSite() {
     brush.setAttribute("display", "none");
   }
 
-  if (state.focus.kind === "area") {
-    const area = findArea(state.focus.id);
-    if (area && !document.getElementById("areaPopover").hidden) {
-      positionAreaPopover(area);
-    }
-  }
-  if (state.focus.kind === "drawing") {
-    const drawing = findDrawing(state.focus.id);
-    if (drawing && !document.getElementById("drawPopover").hidden) {
-      positionDrawPopover(drawing);
-    }
-  }
-  if (state.focus.kind === "supply") {
-    const supply = findSupply(state.focus.id);
-    if (supply && !document.getElementById("supplyPopover").hidden) {
-      positionSupplyPopover(supply);
-    }
-  }
 }
 
 function drawUtility(utility, live) {
@@ -2751,9 +2782,6 @@ function drawUtility(utility, live) {
       handle.setAttribute("cx", pt.x);
       handle.setAttribute("cy", pt.y);
     });
-  }
-  if (selected && !document.getElementById("utilityPopover").hidden) {
-    positionUtilityPopover(utility);
   }
 }
 
@@ -3071,12 +3099,63 @@ function hitTest(p) {
 
 function sitePoint(event) {
   const rect = svg.getBoundingClientRect();
-  const scaleX = SITE.w / rect.width;
-  const scaleY = SITE.h / rect.height;
+  const cam = state.camera;
   return {
-    x: (event.clientX - rect.left) * scaleX,
-    y: (event.clientY - rect.top) * scaleY,
+    x: cam.x + ((event.clientX - rect.left) / rect.width) * cam.w,
+    y: cam.y + ((event.clientY - rect.top) / rect.height) * cam.h,
   };
+}
+
+function viewCenter() {
+  const cam = state.camera;
+  return clampPoint({ x: cam.x + cam.w / 2, y: cam.y + cam.h / 2 });
+}
+
+function unitsPerScreenPx() {
+  const rect = svg.getBoundingClientRect();
+  return rect.width ? state.camera.w / rect.width : 1;
+}
+
+function applyCamera() {
+  const rect = svg.getBoundingClientRect();
+  const cam = state.camera;
+  if (rect.width && rect.height) cam.h = cam.w * (rect.height / rect.width);
+  const maxW = Math.max(SITE.w, SITE.h * (rect.width / Math.max(1, rect.height))) * 1.1;
+  if (cam.w > maxW) {
+    const k = maxW / cam.w;
+    cam.w *= k;
+    cam.h *= k;
+  }
+  const cx = Math.max(0, Math.min(SITE.w, cam.x + cam.w / 2));
+  const cy = Math.max(0, Math.min(SITE.h, cam.y + cam.h / 2));
+  cam.x = cx - cam.w / 2;
+  cam.y = cy - cam.h / 2;
+  svg.setAttribute("viewBox", `${cam.x} ${cam.y} ${cam.w} ${cam.h}`);
+}
+
+function zoomAt(factor, client = null) {
+  const rect = svg.getBoundingClientRect();
+  const cam = state.camera;
+  const fx = client ? (client.clientX - rect.left) / rect.width : 0.5;
+  const fy = client ? (client.clientY - rect.top) / rect.height : 0.5;
+  const ax = cam.x + fx * cam.w;
+  const ay = cam.y + fy * cam.h;
+  const w = Math.max(MIN_VIEW_W, cam.w * factor);
+  cam.h *= w / cam.w;
+  cam.w = w;
+  cam.x = ax - fx * cam.w;
+  cam.y = ay - fy * cam.h;
+  applyCamera();
+}
+
+function fitSite() {
+  const rect = svg.getBoundingClientRect();
+  const aspect = rect.width / Math.max(1, rect.height);
+  const cam = state.camera;
+  cam.w = Math.max(SITE.w, SITE.h * aspect) * 1.04;
+  cam.x = SITE.w / 2 - cam.w / 2;
+  cam.y = SITE.h / 2 - cam.w / aspect / 2;
+  applyCamera();
 }
 
 function clampPoint(p) {
@@ -3103,7 +3182,26 @@ function resizeArea(area, corner, p) {
   area.h = Math.max(MIN_AREA, Math.abs(y2 - y1));
 }
 
+const CLICK_PX = 5;
+
+function beginPan(event, clickClears = false) {
+  state.pan = {
+    sx: event.clientX,
+    sy: event.clientY,
+    cx: state.camera.x,
+    cy: state.camera.y,
+    moved: false,
+    clickClears,
+  };
+  svg.setPointerCapture(event.pointerId);
+}
+
 svg.addEventListener("pointerdown", (event) => {
+  if (event.button === 1 || event.button === 2) {
+    event.preventDefault();
+    beginPan(event);
+    return;
+  }
   const p = clampPoint(sitePoint(event));
   if (state.grading) {
     if (event.button === 0) {
@@ -3133,8 +3231,10 @@ svg.addEventListener("pointerdown", (event) => {
   }
 
   const hit = hitTest(p);
-  if (!hit) return;
-
+  if (!hit) {
+    if (event.button === 0) beginPan(event, true);
+    return;
+  }
   if (hit.kind === "equipment") {
     state.selectedId = hit.id;
     state.focus = { kind: "equipment", id: hit.id };
@@ -3206,6 +3306,18 @@ svg.addEventListener("pointerdown", (event) => {
 });
 
 svg.addEventListener("pointermove", (event) => {
+  if (state.pan) {
+    if (!state.pan.moved && Math.hypot(event.clientX - state.pan.sx, event.clientY - state.pan.sy) <= CLICK_PX) {
+      return;
+    }
+    state.pan.moved = true;
+    svg.classList.add("panning");
+    const u = unitsPerScreenPx();
+    state.camera.x = state.pan.cx - (event.clientX - state.pan.sx) * u;
+    state.camera.y = state.pan.cy - (event.clientY - state.pan.sy) * u;
+    applyCamera();
+    return;
+  }
   const p = clampPoint(sitePoint(event));
   state.hoverPt = p;
   if (state.grading) {
@@ -3297,11 +3409,35 @@ svg.addEventListener("pointermove", (event) => {
 });
 
 svg.addEventListener("pointerup", () => {
+  if (state.pan) {
+    const clear = state.pan.clickClears && !state.pan.moved;
+    state.pan = null;
+    svg.classList.remove("panning");
+    if (clear) clearSelection();
+    return;
+  }
   endGrade();
   if (state.freehand) commitDrawing();
   state.drag = null;
   svg.classList.remove("dragging");
 });
+
+svg.addEventListener("contextmenu", (event) => event.preventDefault());
+
+svg.addEventListener(
+  "wheel",
+  (event) => {
+    event.preventDefault();
+    const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+    zoomAt(Math.exp(Math.max(-60, Math.min(60, delta)) * 0.004), event);
+  },
+  { passive: false }
+);
+
+new ResizeObserver(() => applyCamera()).observe(svg);
+document.getElementById("zoomInBtn").addEventListener("click", () => zoomAt(1 / 1.4));
+document.getElementById("zoomOutBtn").addEventListener("click", () => zoomAt(1.4));
+document.getElementById("zoomFitBtn").addEventListener("click", fitSite);
 
 svg.addEventListener("pointerleave", () => {
   if (!grade.active) state.hoverPt = null;
@@ -3336,15 +3472,229 @@ svg.addEventListener("dblclick", (event) => {
   }
 });
 
-document.getElementById("addEquipBtn").addEventListener("click", addEquipment);
+const EQUIP_MENU = [
+  { type: "hydraulic-excavator" },
+  { type: "on-road-dump", note: "Offsite or stockpile" },
+  { type: "articulated-dump", note: "Stockpile only" },
+  { type: "bulldozer" },
+  { type: "wheel-loader" },
+  { type: "soil-compactor" },
+  { type: "compact-track-loader" },
+  { type: "backhoe-loader" },
+  { type: "trencher" },
+];
+const SCALES = [2, 4, 8];
+const PLACERS = { equipment: addEquipment, supply: addSupply, utility: addUtility };
+const pickMenu = document.getElementById("pickMenu");
+const placeGhost = document.getElementById("placeGhost");
+let pickAnchor = null;
+
+function placingSpec(kind, type) {
+  if (kind === "equipment") return EQUIP_CATALOG[type];
+  if (kind === "utility") return UTILITY_CATALOG[type];
+  return SUPPLY_CATALOG[type];
+}
+
+function closePickMenu() {
+  pickMenu.hidden = true;
+  pickMenu.replaceChildren();
+  pickAnchor?.setAttribute("aria-expanded", "false");
+  pickAnchor = null;
+}
+
+function menuEl(tag, className, text, parent) {
+  const el = document.createElement(tag);
+  el.className = className;
+  if (text != null) el.textContent = text;
+  parent.append(el);
+  return el;
+}
+
+function openPickMenu(anchor, sections) {
+  if (pickAnchor === anchor) {
+    closePickMenu();
+    return;
+  }
+  closePickMenu();
+  const close = menuEl("button", "pick-menu-close", "✕", pickMenu);
+  close.type = "button";
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", closePickMenu);
+  for (const { heading, items, empty } of sections) {
+    if (heading) menuEl("p", "pick-menu-heading", heading, pickMenu);
+    if (!items.length && empty) menuEl("p", "pick-menu-empty", empty, pickMenu);
+    for (const item of items) {
+      const btn = menuEl("button", "pick-menu-item", null, pickMenu);
+      btn.type = "button";
+      btn.setAttribute("role", "menuitem");
+      if (item.checked) btn.classList.add("checked");
+      if (item.action) btn.classList.add("action");
+      if (item.color) {
+        const swatch = menuEl("span", "pick-swatch", item.short || "", btn);
+        swatch.style.background = item.color;
+      }
+      const text = menuEl("span", "pick-menu-text", null, btn);
+      menuEl("span", "pick-menu-label", item.label, text);
+      if (item.note) menuEl("span", "pick-menu-note", item.note, text);
+      if (item.place) {
+        btn.title = "Drag onto the site, or click then click the site";
+        btn.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          closePickMenu();
+          beginPlacing(item.place.kind, item.place.type, event);
+        });
+        btn.addEventListener("click", (event) => {
+          if (event.detail !== 0) return;
+          closePickMenu();
+          beginPlacing(item.place.kind, item.place.type);
+        });
+      } else {
+        btn.addEventListener("click", () => {
+          closePickMenu();
+          item.action();
+        });
+      }
+    }
+  }
+  pickMenu.hidden = false;
+  pickAnchor = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  const r = anchor.getBoundingClientRect();
+  const below = window.innerHeight - r.bottom - 16;
+  const above = r.top - 16;
+  const up = below < Math.min(pickMenu.scrollHeight, 240) && above > below;
+  pickMenu.style.maxHeight = `${Math.max(160, up ? above : below)}px`;
+  pickMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - pickMenu.offsetWidth - 8))}px`;
+  pickMenu.style.top = up ? `${Math.max(8, r.top - 4 - pickMenu.offsetHeight)}px` : `${r.bottom + 4}px`;
+  pickMenu.querySelector(".pick-menu-item")?.focus({ preventScroll: true });
+}
+
+function placeItem(kind, type, extra = {}) {
+  const spec = placingSpec(kind, type);
+  return { label: spec.label, short: spec.short, color: spec.color, place: { kind, type }, ...extra };
+}
+
+function supplyItems(filter) {
+  return Object.keys(SUPPLY_CATALOG)
+    .filter(filter)
+    .map((type) => placeItem("supply", type));
+}
+
+function openItemEditor(mode) {
+  window.itemEditor?.open(mode);
+}
+
+function beginPlacing(kind, type, event = null) {
+  const spec = placingSpec(kind, type);
+  if (!spec) return;
+  if (state.drawing || state.measuring || state.grading) setTool(null);
+  state.placing = { kind, type, label: spec.label, dragging: !!event };
+  placeGhost.querySelector(".place-ghost-swatch").style.background = spec.color;
+  placeGhost.querySelector(".place-ghost-label").textContent = spec.label;
+  placeGhost.style.transform = "translate(-9999px, 0)";
+  placeGhost.hidden = false;
+  document.body.classList.add("placing");
+  if (event) moveGhost(event);
+  updateHint();
+}
+
+function dropPoint(event) {
+  const target = document.elementFromPoint(event.clientX, event.clientY);
+  if (target?.closest("#site")) return clampPoint(sitePoint(event));
+  if (target?.tagName === "CANVAS" && target.closest("#view3d")) {
+    return window.siteApi.pickGround?.(event) || null;
+  }
+  return null;
+}
+
+function moveGhost(event) {
+  placeGhost.style.transform = `translate(${event.clientX + 14}px, ${event.clientY + 14}px)`;
+  placeGhost.classList.toggle("over-site", !!dropPoint(event));
+}
+
+function finishPlacing(event) {
+  const at = dropPoint(event);
+  if (!at) return false;
+  const { kind, type } = state.placing;
+  cancelPlacing();
+  PLACERS[kind](type, at);
+  return true;
+}
+
+function cancelPlacing() {
+  if (!state.placing) return;
+  state.placing = null;
+  placeGhost.hidden = true;
+  document.body.classList.remove("placing");
+  updateHint();
+}
+
+window.addEventListener(
+  "pointerdown",
+  (event) => {
+    const inMenu = pickMenu.contains(event.target);
+    const onPicker = !!event.target.closest?.(".pick-btn");
+    if (!pickMenu.hidden && !inMenu && !onPicker) closePickMenu();
+    if (!state.placing || state.placing.dragging || inMenu) return;
+    if (onPicker || event.button !== 0) {
+      cancelPlacing();
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    if (!finishPlacing(event)) cancelPlacing();
+  },
+  true
+);
+window.addEventListener(
+  "pointermove",
+  (event) => {
+    if (state.placing) moveGhost(event);
+  },
+  true
+);
+window.addEventListener(
+  "pointerup",
+  (event) => {
+    if (!state.placing?.dragging) return;
+    state.placing.dragging = false;
+    if (finishPlacing(event)) event.stopPropagation();
+    else updateHint();
+  },
+  true
+);
+
+document.getElementById("addEquipBtn").addEventListener("click", (event) => {
+  openPickMenu(event.currentTarget, [
+    { items: EQUIP_MENU.map(({ type, note }) => placeItem("equipment", type, { note })) },
+  ]);
+});
+document.getElementById("addSupplyBtn").addEventListener("click", (event) => {
+  openPickMenu(event.currentTarget, [
+    { items: supplyItems((type) => !type.startsWith("custom-") && !type.startsWith("structure-")) },
+    { heading: "Custom items", items: supplyItems((type) => type.startsWith("custom-")) },
+    { items: [{ label: "New item…", note: "Build one in 3D", action: () => openItemEditor("supply") }] },
+  ]);
+});
+document.getElementById("addStructureBtn").addEventListener("click", (event) => {
+  openPickMenu(event.currentTarget, [
+    {
+      heading: "Structures",
+      items: supplyItems((type) => type.startsWith("structure-")),
+      empty: "No structures yet.",
+    },
+    { items: [{ label: "New structure…", note: "Build pieces in 3D", action: () => openItemEditor("structure") }] },
+  ]);
+});
+document.getElementById("addUtilityBtn").addEventListener("click", (event) => {
+  openPickMenu(event.currentTarget, [
+    { items: Object.keys(UTILITY_CATALOG).map((type) => placeItem("utility", type)) },
+  ]);
+});
 document.getElementById("addAreaBtn").addEventListener("click", addWorkArea);
 document.getElementById("addOffsiteBtn").addEventListener("click", () => addDump("offsite"));
 document.getElementById("addStockpileBtn").addEventListener("click", () => addDump("stockpile"));
-document.getElementById("addSupplyBtn").addEventListener("click", addSupply);
-document.getElementById("addUtilityBtn").addEventListener("click", addUtility);
-document.getElementById("utilityPopover").addEventListener("pointerdown", (event) => {
-  event.stopPropagation();
-});
 function focusedUtility() {
   return state.focus.kind === "utility" ? findUtility(state.focus.id) : null;
 }
@@ -3380,9 +3730,6 @@ document.getElementById("utilityDiameter").addEventListener("input", (event) => 
   const value = Number(event.target.value);
   if (utility && Number.isFinite(value) && value > 0) utility.diameter = value;
 });
-document.getElementById("supplyPopover").addEventListener("pointerdown", (event) => {
-  event.stopPropagation();
-});
 document.getElementById("supplyTextInput").addEventListener("input", (event) => {
   const supply = state.focus.kind === "supply" ? findSupply(state.focus.id) : null;
   if (!supply) return;
@@ -3390,10 +3737,9 @@ document.getElementById("supplyTextInput").addEventListener("input", (event) => 
   document.getElementById("selectedName").textContent = supplyLabel(supply);
 });
 document.getElementById("addHaulBtn").addEventListener("click", addHaulRoad);
+document.getElementById("copyBtn").addEventListener("click", copySelected);
+document.getElementById("pasteBtn").addEventListener("click", pasteSelected);
 document.getElementById("removeEquipBtn").addEventListener("click", removeSelected);
-document.getElementById("areaPopover").addEventListener("pointerdown", (event) => {
-  event.stopPropagation();
-});
 document.getElementById("areaNameInput").addEventListener("input", (event) => {
   const area = findArea(state.focus.id);
   if (area) area.name = event.target.value;
@@ -3451,16 +3797,24 @@ document.getElementById("vexag").addEventListener("input", (event) => {
 document.getElementById("showExisting").addEventListener("change", (event) => {
   state.showExisting = event.target.checked;
 });
-document.getElementById("drawKindSelect").addEventListener("change", (event) => {
-  if (state.drawing) commitDrawing();
-  state.drawKind = event.target.value;
-  updateHint();
-});
-document.getElementById("drawLineBtn").addEventListener("click", () => {
-  setTool("draw");
-});
-document.getElementById("drawPopover").addEventListener("pointerdown", (event) => {
-  event.stopPropagation();
+document.getElementById("drawLineBtn").addEventListener("click", (event) => {
+  if (state.drawing) {
+    closePickMenu();
+    setTool("draw");
+    return;
+  }
+  openPickMenu(event.currentTarget, [
+    {
+      items: DRAW_TOOLS.map((tool) => ({
+        label: tool.label,
+        checked: tool.id === state.drawKind,
+        action: () => {
+          state.drawKind = tool.id;
+          setTool("draw");
+        },
+      })),
+    },
+  ]);
 });
 document.getElementById("drawTextInput").addEventListener("input", (event) => {
   const drawing = findDrawing(state.focus.id);
@@ -3556,8 +3910,20 @@ document.getElementById("straightenBtn").addEventListener("click", () => {
   road.waypoints = pts.length >= 2 ? pts : [a, b];
 });
 
-document.getElementById("scaleSelect").addEventListener("change", (event) => {
-  state.feetPerPx = Number(event.target.value);
+document.getElementById("scaleBtn").addEventListener("click", (event) => {
+  const btn = event.currentTarget;
+  openPickMenu(btn, [
+    {
+      items: SCALES.map((fpp) => ({
+        label: `1 px = ${fpp} ft`,
+        checked: fpp === state.feetPerPx,
+        action: () => {
+          state.feetPerPx = fpp;
+          btn.textContent = `Scale: 1 px = ${fpp} ft`;
+        },
+      })),
+    },
+  ]);
 });
 
 document.getElementById("inputs").addEventListener("input", (event) => {
@@ -3571,8 +3937,21 @@ window.addEventListener("keydown", (event) => {
     event.target instanceof HTMLInputElement ||
     event.target instanceof HTMLSelectElement ||
     event.target instanceof HTMLTextAreaElement;
+  if (event.key === "Escape" && (state.placing || !pickMenu.hidden)) {
+    cancelPlacing();
+    closePickMenu();
+    event.preventDefault();
+    return;
+  }
   if (typing) return;
-  if (event.key === "Enter" && state.drawing) {
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === "c") {
+    copySelected();
+    event.preventDefault();
+  } else if ((event.ctrlKey || event.metaKey) && key === "v") {
+    pasteSelected();
+    event.preventDefault();
+  } else if (event.key === "Enter" && state.drawing) {
     commitDrawing();
     event.preventDefault();
   } else if (event.key === "Enter" && state.measuring) {
@@ -3590,15 +3969,7 @@ window.addEventListener("keydown", (event) => {
     !state.drawing &&
     !state.measuring
   ) {
-    if (
-      state.focus.kind === "area" ||
-      state.focus.kind === "drawing" ||
-      state.focus.kind === "dump" ||
-      state.focus.kind === "haul" ||
-      state.focus.kind === "measure" ||
-      state.focus.kind === "supply" ||
-      state.focus.kind === "utility"
-    ) {
+    if (state.focus.kind && state.focus.kind !== "none") {
       removeSelected();
       event.preventDefault();
     }
@@ -3684,6 +4055,7 @@ function advanceStockpiling(dt, result) {
   }
 }
 
+applyCamera();
 resetGround();
 updateSurface();
 renderTerrainImage(true);
@@ -3699,6 +4071,8 @@ window.siteApi = {
   supplySpec,
   supplyReach,
   addCustomSupply,
+  addCustomStructure,
+  beginPlacing,
   utilitySpec,
   utilityTopAt,
   equipmentLabel,
@@ -3709,6 +4083,7 @@ window.siteApi = {
   surfaceRGB,
   earthColor,
   focusItem,
+  clearSelection,
   beginGrade,
   moveGrade,
   endGrade,

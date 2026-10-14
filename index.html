@@ -25,102 +25,24 @@
           <div class="site-toolbar">
             <span>Site plan · drag gear · click road to add a waypoint</span>
             <div class="toolbar-actions">
-              <label>
-                Equipment
-                <select id="equipTypeSelect">
-                  <option value="hydraulic-excavator">Hydraulic excavator</option>
-                  <option value="on-road-dump">Dump truck (offsite or stockpile)</option>
-                  <option value="articulated-dump">Articulated dump truck (stockpile only)</option>
-                  <option value="bulldozer">Bulldozer</option>
-                  <option value="wheel-loader">Wheel loader</option>
-                  <option value="soil-compactor">Soil compactor / roller</option>
-                  <option value="compact-track-loader">Compact track loader</option>
-                  <option value="backhoe-loader">Backhoe loader</option>
-                  <option value="trencher">Trencher</option>
-                </select>
-              </label>
-              <button type="button" id="addEquipBtn">Add equipment</button>
-              <label>
-                Field supplies
-                <select id="supplyTypeSelect">
-                  <option value="traffic-cone">Traffic cones</option>
-                  <option value="candlestick-cone">Candlestick cones</option>
-                  <option value="jersey-barrier">Jersey barriers</option>
-                  <option value="mafia-block">Mafia blocks</option>
-                  <option value="sign">Sign</option>
-                  <option value="fence">Fence</option>
-                  <option value="rope">Rope</option>
-                  <option value="stakes">Stakes</option>
-                  <option value="connex-box">Connex box</option>
-                  <option value="jobsite-trailer">Jobsite trailer</option>
-                  <option value="portable-toilet">Portable toilets</option>
-                  <option value="water-diversion-barrier">Water diversion barriers</option>
-                  <option value="sandbags">Sandbags</option>
-                  <option value="steel-plates">Steel plates</option>
-                  <option value="temp-lighting">Temp lighting</option>
-                  <option value="generator">Generators</option>
-                  <option value="water-hose">Water hose</option>
-                  <option value="fuel-tank">Fuel tank</option>
-                  <option value="spill-kit">Spill kit</option>
-                  <option value="ladder">Ladder</option>
-                  <option value="traffic-drum">Traffic drum</option>
-                </select>
-              </label>
-              <button type="button" id="addSupplyBtn">Add supply</button>
-              <button type="button" id="newSupplyBtn">New item…</button>
-              <label>
-                Utility
-                <select id="utilityTypeSelect">
-                  <option value="sanitary">Sanitary</option>
-                  <option value="gas">Gas</option>
-                  <option value="water">Water</option>
-                  <option value="electric">Electric</option>
-                </select>
-              </label>
-              <button type="button" id="addUtilityBtn">Add utility</button>
+              <button type="button" id="addEquipBtn" class="pick-btn" aria-haspopup="menu">Add equipment</button>
+              <button type="button" id="addSupplyBtn" class="pick-btn" aria-haspopup="menu">Add supply</button>
+              <button type="button" id="addStructureBtn" class="pick-btn" aria-haspopup="menu">Add structure</button>
+              <button type="button" id="addUtilityBtn" class="pick-btn" aria-haspopup="menu">Add utility</button>
               <button type="button" id="addAreaBtn">Add work area</button>
               <button type="button" id="addOffsiteBtn">Add offsite dump</button>
               <button type="button" id="addStockpileBtn">Add stockpile</button>
               <button type="button" id="addHaulBtn">Add haul road</button>
-              <label>
-                Draw
-                <select id="drawKindSelect">
-                  <option value="line">Line</option>
-                  <option value="polyline">Polyline</option>
-                  <option value="arc">Arc</option>
-                  <option value="circle">Circle</option>
-                  <option value="rect">Rectangle</option>
-                  <option value="polygon">Polygon</option>
-                  <option value="freehand">Freehand line</option>
-                  <option value="spline">Spline / curve</option>
-                  <option value="point">Point</option>
-                  <option value="text">Text box</option>
-                  <option value="leader">Leader / callout</option>
-                  <option value="arrow">Arrow</option>
-                  <option value="hatch">Hatch / fill</option>
-                </select>
-              </label>
-              <button type="button" id="drawLineBtn" aria-pressed="false">
-                Draw
-              </button>
+              <button type="button" id="drawLineBtn" class="pick-btn" aria-haspopup="menu" aria-pressed="false">Draw</button>
               <button type="button" id="measureBtn" aria-pressed="false">
                 Measure
               </button>
-              <label>
-                Scale
-                <select id="scaleSelect">
-                  <option value="2">1 px = 2 ft</option>
-                  <option value="4" selected>1 px = 4 ft</option>
-                  <option value="8">1 px = 8 ft</option>
-                </select>
-              </label>
               <button type="button" id="straightenBtn">Straight haul</button>
             </div>
           </div>
           <div class="terrain-bar">
             <div class="view-toggle" role="group" aria-label="View">
-              <button type="button" data-view="plan" aria-pressed="false">Plan</button>
-              <button type="button" data-view="split" aria-pressed="true">Split</button>
+              <button type="button" data-view="plan" aria-pressed="true">Plan</button>
               <button type="button" data-view="3d" aria-pressed="false">3D</button>
             </div>
             <button type="button" id="gradeBtn" aria-pressed="false">Grade ground</button>
@@ -156,10 +78,10 @@
               <span id="elevReadout">Hover the site for elevation</span>
             </span>
           </div>
-          <div class="views" id="views" data-view="split">
+          <div class="views" id="views" data-view="plan">
           <svg
             id="site"
-            viewBox="0 0 960 620"
+            viewBox="480 310 960 620"
             role="img"
             aria-label="Cartoon construction site"
           >
@@ -321,18 +243,19 @@
             </defs>
 
             <g class="site-ground">
-              <rect width="960" height="620" class="ground-base" />
+              <rect width="1920" height="1240" class="ground-base" />
               <image
                 id="terrainImage"
                 x="0"
                 y="0"
-                width="960"
-                height="620"
+                width="1920"
+                height="1240"
                 preserveAspectRatio="none"
               />
-              <rect width="960" height="620" fill="url(#dirt-dots)" opacity="0.45" />
-              <rect width="960" height="620" fill="url(#grass-tufts)" opacity="0.5" />
-              <g class="site-props" opacity="0.9">
+              <rect width="1920" height="1240" fill="url(#dirt-dots)" opacity="0.45" />
+              <rect width="1920" height="1240" fill="url(#grass-tufts)" opacity="0.5" />
+              <rect width="1920" height="1240" class="site-boundary" />
+              <g class="site-props" opacity="0.9" transform="translate(480 310)">
                 <g transform="translate(430 80)">
                   <rect x="-6" y="-18" width="12" height="22" rx="2" fill="#ff8a1f" stroke="#c45a00" stroke-width="1.5" />
                   <polygon points="-10,-18 10,-18 0,-30" fill="#fff" stroke="#c45a00" stroke-width="1.5" />
@@ -355,134 +278,17 @@
             <g id="layer-measures"></g>
             <g id="layer-ui"></g>
           </svg>
+          <div class="zoom-controls" role="group" aria-label="Zoom">
+            <button type="button" id="zoomInBtn" aria-label="Zoom in">+</button>
+            <button type="button" id="zoomOutBtn" aria-label="Zoom out">−</button>
+            <button type="button" id="zoomFitBtn">Fit</button>
+          </div>
           <div id="view3d" class="view3d">
             <p class="view3d-help">
               Drag to orbit · right-drag to pan · scroll to zoom · click a machine to select it
             </p>
             <button type="button" id="resetCameraBtn" class="view3d-reset">Reset camera</button>
           </div>
-          </div>
-          <div id="drawPopover" class="area-popover" hidden>
-            <label id="drawTextFields">
-              Text
-              <input id="drawTextInput" type="text" maxlength="80" />
-            </label>
-            <div id="drawElevFields" class="popover-design">
-              <label>
-                Start elevation
-                <span class="field">
-                  <input id="drawElevStart" type="number" step="0.5" />
-                  <span>ft</span>
-                </span>
-              </label>
-              <label id="drawElevEndLabel">
-                End elevation
-                <span class="field">
-                  <input id="drawElevEnd" type="number" step="0.5" placeholder="level" />
-                  <span>ft</span>
-                </span>
-              </label>
-              <button type="button" id="drawUseGroundBtn">Use ground elevation</button>
-              <p class="popover-note" id="drawSurfaceNote"></p>
-            </div>
-          </div>
-          <div id="supplyPopover" class="area-popover" hidden>
-            <label>
-              Sign text
-              <input id="supplyTextInput" type="text" maxlength="40" />
-            </label>
-          </div>
-          <div id="utilityPopover" class="area-popover" hidden>
-            <label>
-              Type
-              <select id="utilityKindSelect">
-                <option value="sanitary">Sanitary</option>
-                <option value="gas">Gas</option>
-                <option value="water">Water</option>
-                <option value="electric">Electric</option>
-              </select>
-            </label>
-            <label>
-              Position
-              <select id="utilityModeSelect">
-                <option value="depth">Depth below surface</option>
-                <option value="elev">Top of utility elevation</option>
-              </select>
-            </label>
-            <label id="utilityDepthLabel">
-              Depth to top
-              <span class="field">
-                <input id="utilityDepth" type="number" min="0" step="0.5" />
-                <span>ft</span>
-              </span>
-            </label>
-            <label id="utilityElevLabel">
-              Top elevation
-              <span class="field">
-                <input id="utilityElev" type="number" step="0.1" />
-                <span>ft</span>
-              </span>
-            </label>
-            <label>
-              Diameter
-              <span class="field">
-                <input id="utilityDiameter" type="number" min="0.5" step="0.5" />
-                <span>in</span>
-              </span>
-            </label>
-            <p class="popover-note" id="utilityNote"></p>
-          </div>
-          <div id="areaPopover" class="area-popover" hidden>
-            <label>
-              Name
-              <input id="areaNameInput" type="text" maxlength="40" />
-            </label>
-            <label>
-              Type
-              <select id="areaKindSelect">
-                <option value="zone">Work Zone</option>
-                <option value="cut">Cut</option>
-                <option value="fill">Fill</option>
-              </select>
-            </label>
-            <div id="areaDesignFields" class="popover-design">
-              <label>
-                Material
-                <select id="areaMaterialSelect">
-                  <option value="soil">Soil</option>
-                  <option value="clay">Clay</option>
-                  <option value="sand">Sand</option>
-                  <option value="gravel">Gravel</option>
-                  <option value="asphalt">Asphalt</option>
-                  <option value="concrete">Concrete</option>
-                </select>
-              </label>
-              <div class="popover-factor">
-                <label class="check">
-                  <input id="areaFactorOn" type="checkbox" />
-                  <span id="areaFactorName">Swell</span>
-                </label>
-                <span class="field">
-                  <input id="areaFactorPct" type="number" min="0" max="100" step="1" />
-                  <span>%</span>
-                </span>
-              </div>
-              <label>
-                Pad elevation
-                <span class="field">
-                  <input id="areaDesignElev" type="number" step="0.5" />
-                  <span>ft</span>
-                </span>
-              </label>
-              <label>
-                Side slope
-                <span class="field">
-                  <input id="areaSideSlope" type="number" min="0.25" step="0.5" />
-                  <span>H:1V</span>
-                </span>
-              </label>
-              <p class="popover-note" id="areaVolume"></p>
-            </div>
           </div>
           <p class="hint" id="hint">
             Add work areas and drag the corners to size them. Measure lengths
@@ -597,6 +403,132 @@
                   <option value="">None</option>
                 </select>
               </label>
+            </div>
+            <div id="areaFields" class="stack" hidden>
+              <label>
+                Name
+                <input id="areaNameInput" type="text" maxlength="40" />
+              </label>
+              <label>
+                Type
+                <select id="areaKindSelect">
+                  <option value="zone">Work Zone</option>
+                  <option value="cut">Cut</option>
+                  <option value="fill">Fill</option>
+                </select>
+              </label>
+              <div id="areaDesignFields" class="popover-design">
+                <label>
+                  Material
+                  <select id="areaMaterialSelect">
+                    <option value="soil">Soil</option>
+                    <option value="clay">Clay</option>
+                    <option value="sand">Sand</option>
+                    <option value="gravel">Gravel</option>
+                    <option value="asphalt">Asphalt</option>
+                    <option value="concrete">Concrete</option>
+                  </select>
+                </label>
+                <div class="popover-factor">
+                  <label class="check">
+                    <input id="areaFactorOn" type="checkbox" />
+                    <span id="areaFactorName">Swell</span>
+                  </label>
+                  <span class="field">
+                    <input id="areaFactorPct" type="number" min="0" max="100" step="1" />
+                    <span>%</span>
+                  </span>
+                </div>
+                <label>
+                  Pad elevation
+                  <span class="field">
+                    <input id="areaDesignElev" type="number" step="0.5" />
+                    <span>ft</span>
+                  </span>
+                </label>
+                <label>
+                  Side slope
+                  <span class="field">
+                    <input id="areaSideSlope" type="number" min="0.25" step="0.5" />
+                    <span>H:1V</span>
+                  </span>
+                </label>
+                <p class="popover-note" id="areaVolume"></p>
+              </div>
+            </div>
+            <div id="drawFields" class="stack" hidden>
+              <label id="drawTextFields">
+                Text
+                <input id="drawTextInput" type="text" maxlength="80" />
+              </label>
+              <div id="drawElevFields" class="popover-design">
+                <label>
+                  Start elevation
+                  <span class="field">
+                    <input id="drawElevStart" type="number" step="0.5" />
+                    <span>ft</span>
+                  </span>
+                </label>
+                <label id="drawElevEndLabel">
+                  End elevation
+                  <span class="field">
+                    <input id="drawElevEnd" type="number" step="0.5" placeholder="level" />
+                    <span>ft</span>
+                  </span>
+                </label>
+                <button type="button" id="drawUseGroundBtn">Use ground elevation</button>
+                <p class="popover-note" id="drawSurfaceNote"></p>
+              </div>
+            </div>
+            <div id="supplyFields" hidden>
+              <label>
+                Sign text
+                <input id="supplyTextInput" type="text" maxlength="40" />
+              </label>
+            </div>
+            <div id="utilityFields" class="stack" hidden>
+              <label>
+                Type
+                <select id="utilityKindSelect">
+                  <option value="sanitary">Sanitary</option>
+                  <option value="gas">Gas</option>
+                  <option value="water">Water</option>
+                  <option value="electric">Electric</option>
+                </select>
+              </label>
+              <label>
+                Position
+                <select id="utilityModeSelect">
+                  <option value="depth">Depth below surface</option>
+                  <option value="elev">Top of utility elevation</option>
+                </select>
+              </label>
+              <label id="utilityDepthLabel">
+                Depth to top
+                <span class="field">
+                  <input id="utilityDepth" type="number" min="0" step="0.5" />
+                  <span>ft</span>
+                </span>
+              </label>
+              <label id="utilityElevLabel">
+                Top elevation
+                <span class="field">
+                  <input id="utilityElev" type="number" step="0.1" />
+                  <span>ft</span>
+                </span>
+              </label>
+              <label>
+                Diameter
+                <span class="field">
+                  <input id="utilityDiameter" type="number" min="0.5" step="0.5" />
+                  <span>in</span>
+                </span>
+              </label>
+              <p class="popover-note" id="utilityNote"></p>
+            </div>
+            <div class="split">
+              <button type="button" id="copyBtn" disabled>Copy</button>
+              <button type="button" id="pasteBtn" disabled>Paste</button>
             </div>
             <button type="button" id="removeEquipBtn" disabled>
               Remove selected
@@ -722,6 +654,12 @@
         </aside>
       </main>
     </div>
+    <button type="button" id="scaleBtn" class="pick-btn scale-dock" aria-haspopup="menu">Scale: 1 px = 4 ft</button>
+    <div id="pickMenu" class="pick-menu" role="menu" hidden></div>
+    <div id="placeGhost" class="place-ghost" hidden>
+      <span class="place-ghost-swatch"></span>
+      <span class="place-ghost-label"></span>
+    </div>
     <div id="itemEditor" class="item-editor" hidden>
       <div class="item-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="itemEditorTitle">
         <header class="item-editor-head">
@@ -783,6 +721,26 @@
                 </span>
               </label>
               <button type="button" id="itemExtrudeBtn">Extrude</button>
+            </div>
+            <div id="itemPieceFields" class="stack" hidden>
+              <h3>Pieces</h3>
+              <button type="button" id="itemMakePieceBtn">Make piece from linework</button>
+              <div class="view-toggle" id="itemToolSeg">
+                <button type="button" data-tool="draw" aria-pressed="true">Draw</button>
+                <button type="button" data-tool="select" aria-pressed="false">Select / move</button>
+              </div>
+              <div class="split">
+                <button type="button" id="itemCopyBtn">Copy</button>
+                <button type="button" id="itemPasteBtn">Paste</button>
+              </div>
+              <div class="split">
+                <button type="button" id="itemRotateBtn">Rotate 90°</button>
+                <button type="button" id="itemDeletePieceBtn">Delete piece</button>
+              </div>
+              <label class="check">
+                <input id="itemSnapPieces" type="checkbox" checked />
+                Snap pieces together
+              </label>
             </div>
             <p class="selection-meta" id="itemStats"></p>
             <div class="split item-editor-actions">
